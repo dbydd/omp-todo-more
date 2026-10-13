@@ -1,0 +1,17 @@
+[data-role="todo-more.panel"],
+[data-role="todo-more.goal-editor"],
+[data-role="todo-more.explanation-editor"] {
+	min-width: 0;
+	max-width: 100%;
+}
+
+[data-role="todo-more.panel"] .sf-text,
+[data-role="todo-more.goal-editor"] .sf-text,
+[data-role="todo-more.explanation-editor"] .sf-text {
+	overflow-wrap: anywhere;
+}
+
+[data-role="todo-more.goal-editor"] .sf-editor,
+[data-role="todo-more.explanation-editor"] .sf-editor {
+	min-height: 80px;
+}
