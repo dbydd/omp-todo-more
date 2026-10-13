@@ -4,6 +4,10 @@ OMP 的富信息 Todo 插件。替代原生 `todo`，保留标题寻址、阶段
 
 ## 安装与启用
 
+```sh
+omp install https://github.com/mouriya-s-lab/omp-todo-more
+```
+
 插件入口是包根 `index.ts`，由 `package.json` 的 `omp.extensions` 声明。使用插件前在 OMP 配置中关闭原生 Todo：
 
 ```yaml
