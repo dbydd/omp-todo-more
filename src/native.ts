@@ -5,7 +5,7 @@ import type { TodoMoreSnapshot } from "./state.ts";
 import type { parametersSchema, TodoMoreDetails } from "./tool.ts";
 
 /** A presentation of a snapshot only; callers must read the branch before editing. */
-export function describeSnapshot(snapshot: TodoMoreSnapshot, editable = false): NativeChild[] {
+export function describeSnapshot(snapshot: TodoMoreSnapshot, editable = false, selectedTitle?: string): NativeChild[] {
 	const body: NativeChild[] = [
 		node(
 			"kv",
@@ -39,6 +39,7 @@ export function describeSnapshot(snapshot: TodoMoreSnapshot, editable = false): 
 											role: "omp.btn",
 											actions: { click: `todo-more.explain:${item.title}` },
 											title: `Edit explanation: ${item.title}`,
+											tone: selectedTitle === item.title ? "accent" : undefined,
 										},
 										[node("text", { text: "Edit explanation" })],
 										"edit",

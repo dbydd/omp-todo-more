@@ -57,7 +57,7 @@ GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，不增加�
 
 ## 原生展示与编辑
 
-在 OMP/Tern 中输入 `/todo-more` 打开当前会话的独立 overlay，不替换宿主 `/todo`。面板显示三项 goal、全部 phase/task、五种 status、explanation 和 blocker；历史工具卡片从当次 `details.more` 展示，不成为编辑源。
+在 OMP/Tern 中输入 `/todo-more` 打开当前会话的独立 overlay，不替换宿主 `/todo`。面板显示三项 goal、全部 phase/task、五种 status、explanation 和 blocker；历史工具卡片从当次 `details.more` 展示，不成为编辑源。面板中 Tab/Shift+Tab 或上下方向键选择动作，当前动作以 accent 标记，Enter 打开它；任务删除后选择位置按当前列表收敛。
 
 `Edit goal` 使用三个有标签的宿主 Editor 草稿，Tab/Shift+Tab 切换当前字段。Tern 同时只把当前字段描述为 live editor，其余字段仍可见且可点击激活；编辑与 undo 由原有 Editor/FormField 处理。`Edit explanation` 打开目标标题的 multiline Editor。普通 Enter 保留换行，Ctrl+Enter 或 Save 保存，Escape/Cancel 丢弃草稿；关闭面板不提交。保存错误保留草稿并显示原因，成功重新读当前分支。编辑本身不启动模型 turn。
 

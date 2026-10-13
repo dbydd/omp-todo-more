@@ -197,16 +197,27 @@ class TodoPanel implements Component {
 		const body: NativeChild[] = [];
 		let role: string;
 		let head: string;
+		let actions: NativeNode[];
 		switch (this.mode.kind) {
 			case "panel": {
 				role = "todo-more.panel";
 				head = "Todo More";
-				body.push(this.button("Edit goal", "todo-more.goal"), ...describeSnapshot(toSnapshot(readTodoMore(branch)), true));
+				const snapshot = toSnapshot(readTodoMore(branch));
+				let count = 0;
+				let selectedTitle: string | undefined;
+				for (const phase of snapshot.phases)
+					for (const item of phase.items) {
+						if (++count === this.mode.selected) selectedTitle = item.title;
+					}
+				this.mode.selected = Math.min(this.mode.selected, count + 1);
+				body.push(this.button("Edit goal", "todo-more.goal", this.mode.selected === 0), ...describeSnapshot(snapshot, true, selectedTitle));
+				actions = [this.button("Close", "close", this.mode.selected === count + 1)];
 				break;
 			}
 			case "goal": {
 				role = "todo-more.goal-editor";
 				head = "Edit goal";
+				actions = [this.button("Save", "todo-more.save"), this.button("Cancel", "close")];
 				for (const name of FIELDS) {
 					const draft = this.mode.fields[name];
 					draft.field.focused = this.focused && name === this.mode.active;
@@ -231,6 +242,7 @@ class TodoPanel implements Component {
 				head = `Edit explanation: ${this.mode.title}`;
 				this.mode.draft.field.focused = this.focused;
 				body.push(this.mode.draft.field);
+				actions = [this.button("Save", "todo-more.save"), this.button("Cancel", "close")];
 				break;
 			default: {
 				const unreachable: never = this.mode;
@@ -247,20 +259,18 @@ class TodoPanel implements Component {
 				wrap: "word",
 			}),
 		);
-		body.push(
-			col(
-				this.mode.kind === "panel"
-					? [this.button("Close", "close")]
-					: [this.button("Save", "todo-more.save"), this.button("Cancel", "close")],
-				{ gap: "xs" },
-			),
-		);
+		body.push(col(actions, { gap: "xs" }));
 		this.described = node("card", { role, head }, body);
 		return this.described;
 	}
 
-	private button(label: string, act: string): NativeNode {
-		return node("row", { role: "omp.btn", actions: { click: act }, title: label }, [node("text", { text: label })], act);
+	private button(label: string, act: string, selected = false): NativeNode {
+		return node(
+			"row",
+			{ role: "omp.btn", actions: { click: act }, title: label, tone: selected ? "accent" : undefined },
+			[node("text", { text: label })],
+			act,
+		);
 	}
 
 	handleNativeEvent(event: NativeUiEvent): void {
