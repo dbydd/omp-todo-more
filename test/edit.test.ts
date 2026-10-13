@@ -1,0 +1,227 @@
+import { describe, expect, test } from "bun:test";
+import { applyTodoEdit, type TodoEdit } from "../src/edit.ts";
+import { EMPTY, stateOf, type TodoGoal, type TodoItem, type TodoMoreState, type TodoPhase, toSnapshot } from "../src/state.ts";
+
+const goal: TodoGoal = {
+	objective: "Ship editable todos",
+	measure: "Edits retain current task state",
+	doneWhen: "User-visible boundaries are covered",
+};
+
+function currentPhases(): readonly TodoPhase[] {
+	return [
+		{
+			name: "Delivery",
+			items: [
+				{ title: "Edit goal", explanation: { kind: "explained", text: "Replace the objective" }, status: "in_progress" },
+				{ title: "Verify resume", explanation: { kind: "explained", text: "Inspect saved fields" }, status: "pending" },
+			],
+		},
+		{
+			name: "Verification",
+			items: [
+				{
+					title: "Check runtime",
+					explanation: { kind: "explained", text: "Wait for the environment" },
+					status: "blocked",
+					blocker: "Runtime is unavailable",
+				},
+				{ title: "Review results", explanation: { kind: "missing" }, status: "completed" },
+				{ title: "Old approach", explanation: { kind: "explained", text: "No longer needed" }, status: "abandoned" },
+			],
+		},
+	];
+}
+
+function applySuccessfully(state: TodoMoreState, edit: TodoEdit): TodoMoreState {
+	const result = applyTodoEdit(state, edit);
+	expect(result.kind).toBe("ok");
+	if (result.kind !== "ok") throw new Error(result.message);
+	return result.state;
+}
+
+function expectRejected(state: TodoMoreState, edit: TodoEdit, message: string): void {
+	const before = toSnapshot(state);
+	expect(applyTodoEdit(state, edit)).toEqual({ kind: "rejected", message });
+	expect(toSnapshot(state)).toEqual(before);
+}
+
+describe("applyTodoEdit", () => {
+	const latestItems: readonly TodoItem[] = [
+		{ title: "Verify resume", explanation: { kind: "explained", text: "Earlier draft" }, status: "completed" },
+		{
+			title: "Verify resume",
+			explanation: { kind: "explained", text: "Earlier draft" },
+			status: "completed",
+			blocker: "Previously waiting for runtime",
+		},
+		{
+			title: "Verify resume",
+			explanation: { kind: "explained", text: "Earlier draft" },
+			status: "blocked",
+			blocker: "Runtime is unavailable",
+		},
+	];
+
+	for (const latestItem of latestItems) {
+		test(`explanation edit preserves latest ${latestItem.status} status ${latestItem.blocker === undefined ? "without" : "with"} blocker`, () => {
+			const phases = currentPhases();
+			const state = stateOf({ kind: "set", goal }, [
+				...phases,
+				{ name: "Latest branch", items: [{ ...latestItem, title: "Edited task" }] },
+			]);
+			const before = toSnapshot(state);
+			const edited = applySuccessfully(state, { kind: "explain", title: "Edited task", explanation: "Verified after resume" });
+
+			expect(toSnapshot(edited)).toEqual({
+				goal,
+				phases: [
+					...before.phases.slice(0, -1),
+					{
+						name: "Latest branch",
+						items: [
+							{
+								title: "Edited task",
+								explanation: "Verified after resume",
+								status: latestItem.status,
+								...(latestItem.blocker === undefined ? {} : { blocker: latestItem.blocker }),
+							},
+						],
+					},
+				],
+			});
+			expect(toSnapshot(state)).toEqual(before);
+		});
+	}
+
+	test("goal replacement preserves every phase and item field", () => {
+		const state = stateOf({ kind: "set", goal }, currentPhases());
+		const before = toSnapshot(state);
+		const replacement: TodoGoal = {
+			objective: "Ship editable todos in Tern",
+			measure: "Goal and explanations survive resume",
+			doneWhen: "Runtime verification succeeds",
+		};
+		const edited = applySuccessfully(state, { kind: "set_goal", goal: replacement });
+
+		expect(toSnapshot(edited)).toEqual({ goal: replacement, phases: before.phases });
+		expect(toSnapshot(state)).toEqual(before);
+	});
+
+	test("an explanation draft for a deleted title is rejected without restoring the item", () => {
+		const phases = currentPhases();
+		const latest = stateOf(
+			{ kind: "set", goal },
+			phases.map((phase) => ({ ...phase, items: phase.items.filter((item) => item.title !== "Verify resume") })),
+		);
+
+		expectRejected(latest, { kind: "explain", title: "Verify resume", explanation: "Stale draft" }, 'Task "Verify resume" not found');
+	});
+
+	test("an explanation draft for a renamed title is rejected without changing its replacement", () => {
+		const phases = currentPhases();
+		const latest = stateOf(
+			{ kind: "set", goal },
+			phases.map((phase) => ({
+				...phase,
+				items: phase.items.map((item) => (item.title === "Verify resume" ? { ...item, title: "Verify reopened session" } : item)),
+			})),
+		);
+
+		expectRejected(latest, { kind: "explain", title: "Verify resume", explanation: "Stale draft" }, 'Task "Verify resume" not found');
+	});
+
+	test("reordered phases and tasks are edited by the complete title, not the old position", () => {
+		const phases = currentPhases();
+		const latest = stateOf(
+			{ kind: "set", goal },
+			[...phases].reverse().map((phase) => ({ ...phase, items: [...phase.items].reverse() })),
+		);
+		const before = toSnapshot(latest);
+		const preservedPhase = before.phases[0];
+		if (preservedPhase === undefined) throw new Error("Expected the reordered Verification phase in the fixture");
+		const edited = applySuccessfully(latest, { kind: "explain", title: "Verify resume", explanation: "Saved in the current order" });
+
+		expect(toSnapshot(edited)).toEqual({
+			goal,
+			phases: [
+				preservedPhase,
+				{
+					name: "Delivery",
+					items: [
+						{ title: "Verify resume", explanation: "Saved in the current order", status: "pending" },
+						{ title: "Edit goal", explanation: "Replace the objective", status: "in_progress" },
+					],
+				},
+			],
+		});
+		expect(toSnapshot(latest)).toEqual(before);
+	});
+
+	test("missing goal rejects explanation edits until a goal is set", () => {
+		const state = stateOf({ kind: "missing" }, currentPhases());
+		const edit: TodoEdit = { kind: "explain", title: "Review results", explanation: "Reviewed the saved values" };
+		expectRejected(state, edit, "The list has no goal: set goal before editing explanations.");
+
+		const withGoal = applySuccessfully(state, { kind: "set_goal", goal });
+		expect(toSnapshot(withGoal)).toEqual({ goal, phases: toSnapshot(state).phases });
+		const edited = applySuccessfully(withGoal, edit);
+		const expected = toSnapshot(withGoal);
+		expected.phases[1]!.items[1]!.explanation = "Reviewed the saved values";
+		expect(toSnapshot(edited)).toEqual(expected);
+		expect(toSnapshot(withGoal).phases[1]!.items[1]!.explanation).toBeNull();
+	});
+
+	for (const { label, state } of [
+		{ label: "canonical empty", state: EMPTY },
+		{ label: "normalized empty phase", state: stateOf({ kind: "set", goal }, [{ name: "Empty phase", items: [] }]) },
+	]) {
+		test(`empty list rejects both edit kinds (${label})`, () => {
+			expectRejected(state, { kind: "set_goal", goal }, "Todo list is empty.");
+			expectRejected(state, { kind: "explain", title: "Verify resume", explanation: "Cannot create a task" }, "Todo list is empty.");
+		});
+	}
+
+	const goalFields: readonly (keyof TodoGoal)[] = ["objective", "measure", "doneWhen"];
+	for (const field of goalFields) {
+		for (const value of ["", " \t\n "]) {
+			test(`rejects ${value === "" ? "empty" : "whitespace-only"} goal ${field}`, () => {
+				const state = stateOf({ kind: "set", goal }, currentPhases());
+				expectRejected(
+					state,
+					{ kind: "set_goal", goal: { ...goal, [field]: value } },
+					"Goal fields, task title and explanation must not be empty.",
+				);
+			});
+		}
+	}
+
+	for (const explanation of ["", " \t\n "]) {
+		test(`rejects ${explanation === "" ? "empty" : "whitespace-only"} explanations`, () => {
+			const state = stateOf({ kind: "set", goal }, currentPhases());
+			expectRejected(
+				state,
+				{ kind: "explain", title: "Verify resume", explanation },
+				"Goal fields, task title and explanation must not be empty.",
+			);
+		});
+	}
+
+	test("unchanged goal returns the same state with no meaningful change", () => {
+		const state = stateOf({ kind: "set", goal }, currentPhases());
+		const before = toSnapshot(state);
+		const edited = applySuccessfully(state, { kind: "set_goal", goal: { ...goal } });
+
+		expect(edited).toBe(state);
+		expect(toSnapshot(edited)).toEqual(before);
+	});
+
+	test("unchanged explanation returns the same state with no meaningful change", () => {
+		const state = stateOf({ kind: "set", goal }, currentPhases());
+		const before = toSnapshot(state);
+		const edited = applySuccessfully(state, { kind: "explain", title: "Verify resume", explanation: "Inspect saved fields" });
+
+		expect(edited).toBe(state);
+		expect(toSnapshot(edited)).toEqual(before);
+	});
+});
