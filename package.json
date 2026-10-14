@@ -5,7 +5,7 @@
 	"type": "module",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/mouriya-s-lab/omp-todo-more.git"
+		"url": "git+https://github.com/oh-my-omp/omp-todo-more.git"
 	},
 	"files": [
 		"index.ts",
