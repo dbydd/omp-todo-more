@@ -1,2 +1,2 @@
--- Todo More interactions are delivered by OMP native components and its session-bound overlay.
--- This window entry satisfies Tern's stylesheet-plugin manifest contract; it does not own a second editor or state store.
+-- Todo More's live progress card, rich results and session-bound editor use OMP native components.
+-- This entry enables the stylesheet that hides the native Todo HUD and styles its replacement.

@@ -1,5 +1,5 @@
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
-import { type ExtensionAPI, z } from "@oh-my-pi/pi-coding-agent";
+import { z } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { TodoPhase as HostTodoPhase, TodoCompletionTransition } from "@oh-my-pi/pi-tui/tools/todo";
 import { commitTodoState } from "./commit.ts";
@@ -484,7 +484,7 @@ function result(
  * rule errors discard the whole call; projection failure reports the accepted branch state.
  */
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#TodoTool.execute
-export function runTodo(pi: ExtensionAPI, session: AgentSession, raw: unknown): AgentToolResult<TodoMoreDetails> {
+export function runTodo(session: AgentSession, raw: unknown): AgentToolResult<TodoMoreDetails> {
 	const previous = readTodoMore(session.sessionManager.getBranch());
 	const parsed = parseParams(raw, previous.kind === "list");
 	if (parsed.kind === "invalid") return result(session, previous, parsed.message, { isError: true });
@@ -506,7 +506,7 @@ export function runTodo(pi: ExtensionAPI, session: AgentSession, raw: unknown): 
 				? previous.goal
 				: { kind: "missing" };
 	const next = stateOf(goal, updated);
-	const committed = commitTodoState(pi, session, next);
+	const committed = commitTodoState(session, next);
 	if (committed.kind === "failed") {
 		const current = readTodoMore(session.sessionManager.getBranch());
 		return result(session, current, formatSummary(current, [committed.message], true), { op: params.op, isError: true });

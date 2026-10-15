@@ -3,6 +3,7 @@ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import {
 	type Component,
+	Container,
 	col,
 	Editor,
 	FormField,
@@ -15,10 +16,12 @@ import {
 	span,
 	Text,
 	type Theme,
+	type TUI,
 } from "@oh-my-pi/pi-tui";
+import { CustomEditor } from "@oh-my-pi/pi-tui/prompt/custom-editor";
 import { saveTodoEdit, type TodoEdit } from "./edit.ts";
 import { errorText } from "./errors.ts";
-import { describeSnapshot } from "./native.ts";
+import { describeSnapshot, describeTodoHud } from "./native.ts";
 import { goalLines, readTodoMore, toSnapshot } from "./state.ts";
 
 const FIELDS = ["objective", "measure", "doneWhen"] as const;
@@ -41,12 +44,12 @@ class TodoPanel implements Component {
 	readonly nativeOverlay = { role: "todo-more.panel", size: "lg" as const, anchor: "center" as const };
 
 	constructor(
-		private readonly pi: ExtensionAPI,
 		private readonly session: AgentSession,
 		private readonly theme: Theme,
 		private readonly requestRender: () => void,
 		private readonly done: () => void,
 		private readonly signal: AbortSignal,
+		private readonly isCurrentSession: () => boolean,
 	) {}
 
 	private changed(): void {
@@ -146,6 +149,10 @@ class TodoPanel implements Component {
 
 	private save(): void {
 		if (this.disposed || this.signal.aborted) return;
+		if (!this.isCurrentSession()) {
+			this.done();
+			return;
+		}
 		let edit: TodoEdit;
 		switch (this.mode.kind) {
 			case "panel":
@@ -168,7 +175,7 @@ class TodoPanel implements Component {
 				throw new Error(String(unreachable));
 			}
 		}
-		const result = saveTodoEdit(this.pi, this.session, edit);
+		const result = saveTodoEdit(this.session, edit);
 		switch (result.kind) {
 			case "saved":
 				this.discardDraft();
@@ -387,54 +394,167 @@ class TodoPanel implements Component {
 	}
 }
 
+const HUD_WIDGET_KEY = "todo-more.hud";
+const NO_ANSI_HUD_ROWS: readonly string[] = [];
+
+/** The mounted prompt owns the host's live viewed-agent lineage, including during overlays. */
+function findPromptEditor(component: Component): CustomEditor | undefined {
+	if (component instanceof CustomEditor) return component;
+	if (component instanceof Container) {
+		for (let index = component.children.length - 1; index >= 0; index--) {
+			const child = component.children[index];
+			if (child === undefined) continue;
+			const editor = findPromptEditor(child);
+			if (editor !== undefined) return editor;
+		}
+	}
+	return undefined;
+}
+
+function viewedSession(tui: TUI, mainAgentId: string): AgentSession | undefined {
+	const editor = findPromptEditor(tui);
+	if (editor === undefined) return undefined;
+	const viewedAgentId = editor.composerState().viewing?.at(-1) ?? mainAgentId;
+	return AgentRegistry.global().get(viewedAgentId)?.session ?? undefined;
+}
+
+/** Native-only presentation; the branch remains its only Todo state. */
+class TodoHud implements Component {
+	private collapsed = true;
+
+	constructor(
+		private readonly pi: ExtensionAPI,
+		private readonly readSession: () => AgentSession | undefined,
+		private readonly open: () => Promise<void>,
+		private readonly requestRender: () => void,
+	) {}
+
+	describe(): NativeNode | null {
+		try {
+			const session = this.readSession();
+			return session === undefined ? null : describeTodoHud(toSnapshot(readTodoMore(session.sessionManager.getBranch())), this.collapsed);
+		} catch (error) {
+			this.pi.logger.warn("todo-more HUD could not read the current branch", { error: errorText(error) });
+			return null;
+		}
+	}
+
+	render(): readonly string[] {
+		return NO_ANSI_HUD_ROWS;
+	}
+
+	setCollapsed(collapsed: boolean): void {
+		this.collapsed = collapsed;
+		this.requestRender();
+	}
+
+	handleNativeEvent(event: NativeUiEvent): void {
+		if (event.type === "toggle" && event.key === "") this.setCollapsed(event.collapsed);
+		else if (event.type === "action" && event.act === "todo-more.open") void this.open();
+	}
+}
+
 export function registerUi(pi: ExtensionAPI): void {
 	let active: { controller: AbortController; session: AgentSession } | undefined;
+	let hud: { component: TodoHud; tui: TUI } | undefined;
 	const cancel = (): void => {
 		active?.controller.abort();
 		active = undefined;
 	};
-	pi.on("session_switch", cancel);
-	pi.on("session_branch", cancel);
-	pi.on("session_tree", cancel);
-	pi.on("session_shutdown", cancel);
+	const currentSession = (tui: TUI, mainAgentId: string): AgentSession | undefined => {
+		const session = viewedSession(tui, mainAgentId);
+		if (active !== undefined && active.session !== session) cancel();
+		return session;
+	};
+	const open = async (ctx: ExtensionContext): Promise<void> => {
+		if (!ctx.hasUI) {
+			pi.sendMessage({
+				customType: "todo-more.ui-unavailable",
+				content: "Todo More editor requires an interactive UI.",
+				display: true,
+				attribution: "agent",
+			});
+			return;
+		}
+		const session = hud === undefined ? undefined : currentSession(hud.tui, ctx.agent.id);
+		if (session == null || active) return;
+		const opened = { controller: new AbortController(), session };
+		active = opened;
+		try {
+			await ctx.ui.custom<void>(
+				(tui, theme, _keys, done) =>
+					new TodoPanel(
+						session,
+						theme,
+						() => tui.requestRender(),
+						() => done(),
+						opened.controller.signal,
+						() => currentSession(tui, ctx.agent.id) === session,
+					),
+				{ overlay: true, signal: opened.controller.signal },
+			);
+		} catch (error) {
+			// Session transitions abort the old overlay and discard its draft normally.
+			if (!opened.controller.signal.aborted) {
+				pi.logger.warn("todo-more UI failed", { error: errorText(error) });
+				ctx.ui.notify(errorText(error), "error");
+			}
+		} finally {
+			if (active === opened) active = undefined;
+		}
+	};
+	const installHud = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI) return;
+		const session = AgentRegistry.global().get(ctx.agent.id)?.session;
+		hud = undefined;
+		ctx.ui.setWidget(
+			HUD_WIDGET_KEY,
+			session == null
+				? undefined
+				: (tui) => {
+						const component = new TodoHud(
+							pi,
+							() => currentSession(tui, ctx.agent.id),
+							() => open(ctx),
+							() => tui.requestRender(),
+						);
+						hud = { component, tui };
+						return component;
+					},
+			{ placement: "belowEditor" },
+		);
+	};
+	pi.on("session_start", (_event, ctx) => installHud(ctx));
+	pi.on("session_switch", (_event, ctx) => {
+		cancel();
+		installHud(ctx);
+	});
+	pi.on("session_branch", (_event, ctx) => {
+		cancel();
+		installHud(ctx);
+	});
+	pi.on("session_tree", (_event, ctx) => {
+		cancel();
+		installHud(ctx);
+	});
+	pi.on("session_shutdown", (_event, ctx) => {
+		cancel();
+		if (ctx.hasUI) ctx.ui.setWidget(HUD_WIDGET_KEY, undefined);
+		hud = undefined;
+	});
+	pi.on("input", (event, ctx) => {
+		if (event.source !== "interactive" || !ctx.hasUI || !hud?.tui.nativeRendering) return;
+		const command = /^\/todo(?:[\s:]+(.*))?$/s.exec(event.text.trim());
+		if (command === null) return;
+		const args = (command[1] ?? "").trim().toLowerCase();
+		if (args === "" || args === "edit") return { text: "/todo-more" };
+		if (args === "expand" || args === "collapse") {
+			hud.component.setCollapsed(args === "collapse");
+			return { handled: true };
+		}
+	});
 	pi.registerCommand("todo-more", {
 		description: "Show rich todos and edit the current session's goal and explanations",
-		handler: async (_args: string, ctx: ExtensionContext) => {
-			if (!ctx.hasUI) {
-				pi.sendMessage({
-					customType: "todo-more.ui-unavailable",
-					content: "Todo More editor requires an interactive UI.",
-					display: true,
-					attribution: "agent",
-				});
-				return;
-			}
-			const session = AgentRegistry.global().get(ctx.agent.id)?.session;
-			if (session == null || active) return;
-			const opened = { controller: new AbortController(), session };
-			active = opened;
-			try {
-				await ctx.ui.custom<void>(
-					(tui, theme, _keys, done) =>
-						new TodoPanel(
-							pi,
-							session,
-							theme,
-							() => tui.requestRender(),
-							() => done(),
-							opened.controller.signal,
-						),
-					{ overlay: true, signal: opened.controller.signal },
-				);
-			} catch (error) {
-				// Session transitions abort the old overlay and discard its draft normally.
-				if (!opened.controller.signal.aborted) {
-					pi.logger.warn("todo-more UI failed", { error: errorText(error) });
-					ctx.ui.notify(errorText(error), "error");
-				}
-			} finally {
-				if (active === opened) active = undefined;
-			}
-		},
+		handler: async (_args: string, ctx: ExtensionContext) => open(ctx),
 	});
 }

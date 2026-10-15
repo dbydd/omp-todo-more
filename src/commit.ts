@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { errorText } from "./errors.ts";
 import { hostPhases, readTodoMore, TODO_MORE_ENTRY_TYPE, type TodoMoreState, toSnapshot } from "./state.ts";
@@ -9,11 +8,11 @@ export type TodoCommitResult =
 	| { kind: "failed"; stage: "persist" | "projection"; message: string };
 
 /** No await between reading the branch, appending its record and projecting it. */
-export function commitTodoState(pi: ExtensionAPI, session: AgentSession, next: TodoMoreState): TodoCommitResult {
+export function commitTodoState(session: AgentSession, next: TodoMoreState): TodoCommitResult {
 	try {
 		const current = readTodoMore(session.sessionManager.getBranch());
 		if (!Bun.deepEquals(current, next)) {
-			pi.appendEntry(TODO_MORE_ENTRY_TYPE, toSnapshot(next));
+			session.sessionManager.appendCustomEntry(TODO_MORE_ENTRY_TYPE, toSnapshot(next));
 			if (!Bun.deepEquals(readTodoMore(session.sessionManager.getBranch()), next)) {
 				return { kind: "failed", stage: "persist", message: "Authority branch did not accept the todo snapshot." };
 			}

@@ -14,9 +14,9 @@
  * it (installed on session_start, before_agent_start and edit tool_call), and
  * appends a complete plan-check reminder to each real user message (`context`,
  * request-only; agent-attributed and synthetic messages are excluded).
- * Adds rich native tool descriptions, the session-bound `/todo-more` editor,
- * and synchronous `omp-todo-more:read` review requests. The async factory first
- * awaits Tern owner-CLI asset initialization once per module graph.
+ * Adds rich native tool descriptions, a live native progress widget, the
+ * session-bound `/todo-more` editor, and synchronous `omp-todo-more:read` review
+ * requests. The async factory first awaits Tern owner-CLI asset initialization once per module graph.
  *
  * State: the session branch is the authority (`src/state.ts`,
  * `readTodoMore`): each changing mutation appends a full snapshot entry
@@ -90,7 +90,7 @@ const isTaskAgent = (ctx: ExtensionContext): boolean => {
 };
 
 /** `task:*` subagent: put the tool back after the executor stripped `todo`. */
-async function installForTask(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+async function installForTask(ctx: ExtensionContext): Promise<void> {
 	if (!isTaskAgent(ctx)) return;
 	const session = ownSession(ctx);
 	if (session === undefined) return;
@@ -102,7 +102,7 @@ async function installForTask(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 		return;
 	}
 	// A tool-restricted session registers no extension tools; the RPC host-tool slot still takes one.
-	const hostTool = { ...TOOL_FIELDS, execute: async (_toolCallId: string, params: unknown) => runTodo(pi, session, params) };
+	const hostTool = { ...TOOL_FIELDS, execute: async (_toolCallId: string, params: unknown) => runTodo(session, params) };
 	// The host registry erases each tool's parameter schema; the tool validates its input itself.
 	await session.refreshRpcHostTools([hostTool as unknown as AgentTool]);
 }
@@ -114,7 +114,7 @@ export default async function todoMore(pi: ExtensionAPI): Promise<void> {
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 			const session = ownSession(ctx);
 			if (session === undefined) throw new Error(`todo: no session registered for agent ${ctx.agent.id}`);
-			return runTodo(pi, session, params);
+			return runTodo(session, params);
 		},
 		renderCall: renderTodoCall,
 		renderResult: renderTodoResult,
@@ -122,7 +122,7 @@ export default async function todoMore(pi: ExtensionAPI): Promise<void> {
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		try {
-			await installForTask(pi, ctx);
+			await installForTask(ctx);
 		} catch (error) {
 			pi.logger.warn("todo-more could not install todo", { error: errorText(error) });
 		}

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Replaced Tern's native bottom Todo display with a compact Todo More progress card and a full, upward-opening popover, without modifying OMP or discarding its Todo projection.
+- Unified native tool results, progress details and reminder snapshots around goal fields and the native checklist, preserving explanations alongside blockers and keeping real task counts.
+- Routed Tern's `/todo` and `/todo edit` to the rich editor and `/todo expand` / `/todo collapse` to the replacement card, while retaining task-management subcommands and the ANSI HUD.
+- Followed the host composer's live viewed-agent lineage for child/nested-session progress and edits; commits append through the target session's own manager rather than an extension-bound main-session writer.
+- Shared the domain snapshot schema directly across persisted, tool-result and reminder boundaries so packaged extensions load on the managed OMP runtime without schema introspection.
+
 ## 0.1.0
 
 - Extracted the rich Todo domain, tool, ANSI rendering, reminders and planning guard from omp-config into an independent OMP package.

@@ -57,7 +57,7 @@ export const todoGoalSchema = z.object({ objective: nonEmpty, measure: nonEmpty,
 const statusSchema = z.enum(TODO_STATUSES);
 
 /** The persisted snapshot: `explanation: null` and `goal: null` encode the `missing` variants. */
-const snapshotSchema = z.object({
+export const todoMoreSnapshotSchema = z.object({
 	goal: todoGoalSchema.nullable(),
 	phases: z.array(
 		z.object({
@@ -68,7 +68,7 @@ const snapshotSchema = z.object({
 		}),
 	),
 });
-export type TodoMoreSnapshot = z.infer<typeof snapshotSchema>;
+export type TodoMoreSnapshot = z.infer<typeof todoMoreSnapshotSchema>;
 
 const nativePhasesSchema = z.array(
 	z.object({
@@ -147,7 +147,7 @@ type Record = { readonly kind: "rich"; readonly state: TodoMoreState } | { reado
 function recordOf(entry: SessionEntry): Record | undefined {
 	if (entry.type === "custom") {
 		if (entry.customType === TODO_MORE_ENTRY_TYPE) {
-			const parsed = snapshotSchema.safeParse(entry.data);
+			const parsed = todoMoreSnapshotSchema.safeParse(entry.data);
 			return parsed.success ? { kind: "rich", state: fromSnapshot(parsed.data) } : undefined;
 		}
 		if (entry.customType === USER_TODO_EDIT_CUSTOM_TYPE) {

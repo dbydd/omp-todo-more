@@ -1,4 +1,4 @@
-import { type ExtensionAPI, z } from "@oh-my-pi/pi-coding-agent";
+import { z } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { commitTodoState, type TodoCommitResult } from "./commit.ts";
 import { errorText } from "./errors.ts";
@@ -45,11 +45,11 @@ export function applyTodoEdit(state: TodoMoreState, edit: TodoEdit): AppliedEdit
 	}
 }
 
-export function saveTodoEdit(pi: ExtensionAPI, session: AgentSession, edit: TodoEdit): TodoEditResult {
+export function saveTodoEdit(session: AgentSession, edit: TodoEdit): TodoEditResult {
 	try {
 		const current = readTodoMore(session.sessionManager.getBranch());
 		const applied = applyTodoEdit(current, edit);
-		return applied.kind === "rejected" ? applied : commitTodoState(pi, session, applied.state);
+		return applied.kind === "rejected" ? applied : commitTodoState(session, applied.state);
 	} catch (error) {
 		return { kind: "failed", stage: "persist", message: `Cannot read the authority todo branch: ${errorText(error)}` };
 	}

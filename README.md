@@ -115,13 +115,31 @@ repair an earlier partial projection failure. `view` stays a pure read.
 
 ## Native display and editing
 
-Type `/todo-more` in OMP/Tern to open a separate overlay for the current
-session; it does not replace the host `/todo`. The panel shows the three goal
-fields, every phase/task, the five statuses, explanations and blockers.
-Historical tool cards render from that call's `details.more` and are never an
-edit source. In the panel, Tab/Shift+Tab or the up/down arrows select an
-action, the current action is marked in the accent color, and Enter opens it;
-when a task is deleted the selection settles on the current list.
+In Tern, Todo More replaces the built-in bottom Todo progress display. Its
+compact card shows a progress ring, the current task and the closed/total
+count; completed and abandoned tasks count as closed. Click the card to open
+an upward, scrollable popover containing Objective, Measure, Done when, every
+phase/task, all five statuses, explanations and blockers. Goal fields are not
+fake tasks and do not affect progress. A blocked task shows both its
+explanation and blocker.
+
+Native tool cards and reminder notices use the same goal fields and native
+checklist presentation. Historical tool cards render their own `details.more`;
+reminders keep the snapshot from their own event. Neither becomes an edit
+source or changes when the current list is edited.
+
+In Tern, `/todo` and `/todo edit` open the rich `/todo-more` editor;
+`/todo expand` and `/todo collapse` control the replacement progress card.
+Other host `/todo` subcommands remain available, and their task changes are
+joined by title as described above. Plain ANSI OMP keeps the host `/todo`
+command and HUD; the replacement widget emits no ANSI rows, so it adds no
+duplicate progress display.
+
+`/todo-more` opens the current session's editing overlay in OMP or Tern.
+Tab/Shift+Tab or the up/down arrows select an action, the current action is
+marked in the accent color, and Enter opens it. When a task is deleted, the
+selection settles on the current list. The progress popover's edit button
+opens this same editor rather than another editing implementation.
 
 `Edit goal` uses three labeled host Editor drafts; Tab/Shift+Tab switches the
 current field. Tern describes only the current field as a live editor at a
@@ -133,17 +151,33 @@ closing the panel commits nothing. A save error keeps the draft and shows the
 reason; a successful save re-reads the current branch. Editing itself starts
 no model turn.
 
-The overlay is bound to the session it was opened in; switch, branch, tree and
-shutdown cancel the old UI and draft. Without an interactive UI the command
+The progress widget follows the session being viewed, including focused task
+subagents and nested subagents, and reads that session's current branch on
+each native render. Session switch, branch and tree transitions reinstall
+the widget. The editor is bound to the session it was opened in: changing
+the viewed session, switching, branching, navigating the tree or shutting
+down cancels its old draft. Save checks that owner again and appends to the
+target session's own branch before updating its host projection. An empty
+list has no progress card. Without an interactive UI, the edit command
 reports that it is unavailable and leaves the Todo unchanged.
 
 ## Tern asset lifecycle
 
 The package ships `tern/plugin.toml`, `todo-more.css` and `window.luau`.
-Interaction comes from OMP native components; the Tern window entry only
-satisfies the manifest contract of a stylesheet plugin and does not set up a
-second editor or database. The CSS applies only to this plugin's
-panel/goal-editor/explanation-editor roles.
+OMP native components provide the live progress card, full checklist and
+editing; the window entry satisfies the stylesheet-plugin manifest contract
+and does not create a second state store or editor. The stylesheet hides
+only the host dock's `omp.hud.todo` and styles Todo More's card, upward
+popover and rich fields with Tern's theme tokens. The host Todo projection
+is still maintained for `/todo`, session restoration and other consumers;
+neither OMP nor Tern needs to be patched.
+
+The Tern stylesheet and OMP extension must be enabled together. The
+stylesheet hides the native HUD while the Tern plugin is enabled, including
+in an OMP session that did not load this extension. Disabling or removing
+the Tern plugin restores the original HUD. Tern's supported CSS has no
+`:has()` conditional, so there is no automatic native-HUD fallback when the
+OMP extension is absent.
 
 The async factory first awaits `initializeTernPlugin`, then registers the tool
 and UI. The asset directory is located relative to the module; the owner is
@@ -161,6 +195,11 @@ linked-conflict or re-check failure rejects factory initialization; a machine
 with native todo turned off then gets no tool from this plugin, so a warning
 must not be taken as success. An on-disk install check also does not replace
 verifying the CSS and edit paths in a real window.
+
+For headless native UI verification, Tern's `serve` does not automatically
+load installed plugins. Load the bundled stylesheet into that isolated test
+document through its control endpoint, or use a real Tern window; verify
+the actual progress card, popover and editor, not just the plugin catalog.
 
 ## Development
 

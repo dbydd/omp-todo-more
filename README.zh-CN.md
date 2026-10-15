@@ -63,19 +63,29 @@ GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，不增加�
 
 ## 原生展示与编辑
 
-在 OMP/Tern 中输入 `/todo-more` 打开当前会话的独立 overlay，不替换宿主 `/todo`。面板显示三项 goal、全部 phase/task、五种 status、explanation 和 blocker；历史工具卡片从当次 `details.more` 展示，不成为编辑源。面板中 Tab/Shift+Tab 或上下方向键选择动作，当前动作以 accent 标记，Enter 打开它；任务删除后选择位置按当前列表收敛。
+Todo More 在 Tern 顶替原生底部 Todo 进度。紧凑卡片显示进度环、当前任务和 closed/total；completed 与 abandoned 都计为 closed。点击卡片向上展开可滚动内容，显示 Objective、Measure、Done when、全部 phase/task、五种 status、explanation 和 blocker。goal 不伪装成任务，不影响进度；blocked 任务同时保留解释与阻塞原因。
+
+原生工具卡片和提醒使用同一套 goal 字段与原生 checklist 展示。历史工具卡片使用当次 `details.more`，提醒保留其发生时的快照；两者不成为编辑源，也不随当前列表编辑而改变。
+
+Tern 中的 `/todo` 与 `/todo edit` 打开富信息 `/todo-more` 编辑器，`/todo expand` 与 `/todo collapse` 控制替代进度卡片。其他宿主 `/todo` 子命令继续可用，任务变更按前述规则按标题联结。普通 ANSI OMP 保留宿主 `/todo` 命令和 HUD；替代 widget 不输出 ANSI 行，不产生重复进度。
+
+在 OMP/Tern 中输入 `/todo-more` 打开当前会话的编辑 overlay。Tab/Shift+Tab 或上下方向键选择动作，当前动作以 accent 标记，Enter 打开它；任务删除后选择位置按当前列表收敛。进度 popover 的编辑按钮进入同一个编辑器，不另建编辑实现。
 
 `Edit goal` 使用三个有标签的宿主 Editor 草稿，Tab/Shift+Tab 切换当前字段。Tern 同时只把当前字段描述为 live editor，其余字段仍可见且可点击激活；编辑与 undo 由原有 Editor/FormField 处理。`Edit explanation` 打开目标标题的 multiline Editor。普通 Enter 保留换行，Ctrl+Enter 或 Save 保存，Escape/Cancel 丢弃草稿；关闭面板不提交。保存错误保留草稿并显示原因，成功重新读当前分支。编辑本身不启动模型 turn。
 
-overlay 绑定打开时的 session；switch/branch/tree/shutdown 取消旧 UI 与草稿。没有交互 UI 时命令报告不可用，不改变 Todo。
+进度 widget 每次原生渲染读取当前查看会话（含聚焦的 task 子会话及嵌套子会话）的当前分支，在 switch/branch/tree 后重新安装；空列表不显示进度卡片。编辑 overlay 绑定打开时的 session，查看目标改变或 switch/branch/tree/shutdown 会取消旧 UI 与草稿。Save 再次核对目标，将记录追加到该 session 自己的分支，再更新其宿主投影。没有交互 UI 时编辑命令报告不可用，不改变 Todo。
 
 ## Tern 资产生命周期
 
-包附带 `tern/plugin.toml`、`todo-more.css`、`window.luau`。交互由 OMP native components 提供；Tern window entry 仅满足 stylesheet 插件的 manifest 契约，不建立另一套编辑器或数据库。CSS 只作用于本插件的 panel/goal-editor/explanation-editor 角色。
+包附带 `tern/plugin.toml`、`todo-more.css`、`window.luau`。实时进度卡片、完整 checklist 和编辑由 OMP native components 提供；Tern window entry 满足 stylesheet 插件的 manifest 契约，不建立第二套状态存储或编辑器。CSS 仅隐藏宿主 dock 中的 `omp.hud.todo`，并用 Tern 主题变量呈现 Todo More 卡片、向上 popover 和富字段。宿主 Todo 投影继续供 `/todo`、会话恢复及其他消费者使用，不修改 OMP 或 Tern 宿主。
+
+Tern 样式插件必须与 OMP 扩展成套启用。Tern 插件启用期间，样式会隐藏原生 HUD，包括没有加载本 OMP 扩展的会话；禁用或移除 Tern 插件会恢复原生 HUD。Tern CSS 不支持 `:has()` 条件，不承诺 OMP 扩展缺失时自动回退原生 HUD。
 
 async 工厂先 await `initializeTernPlugin`，然后注册工具和 UI。资产目录从模块相对路径定位；通过真正的 `tern plugin dir/list/install --json` 请求 owner，校验 catalog 与三文件 normal copy。相同 ready/disabled 副本不重新安装；需要更新时使用 `install --force`，等待后复查身份、版本、destination、catalog 和文件内容。保留用户 disabled 设置，不执行 unlink 或自动 enable。
 
 本加载图只有一个初始化 Promise，prepared 子工厂复用它，但每个 session 仍独立注册工具、hooks 与 read listener。Tern 不在 PATH 时允许 ANSI OMP 使用，不代表 GUI 验收完成。Tern 存在时的 CLI、解析、安装、linked 冲突或复查失败会拒绝工厂初始化；原生 todo 已关闭的机器此时不会得到本插件工具，不能把 warning 当成成功。磁盘安装验收也不替代真实窗口的 CSS 和编辑路径验证。
+
+Tern 的 headless `serve` 不自动加载已安装插件。原生 UI 验证需要通过隔离测试文档的 control endpoint 加载随包 stylesheet，或使用真实 Tern 窗口；必须核对实际进度卡片、popover 和编辑器，不能只检查 catalog。
 
 ## 开发
 

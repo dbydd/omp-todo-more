@@ -56,8 +56,10 @@ import { type ExtensionAPI, type ExtensionContext, type MessageRenderer, type Se
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { cfgTodoEager, cfgTodoReminders, cfgTodoRemindersMax } from "@oh-my-pi/pi-coding-agent/tools/settings";
+import { type NativeNode, node, span } from "@oh-my-pi/pi-tui";
 import { escapeXmlText } from "@oh-my-pi/pi-utils";
 import { errorText } from "./errors.ts";
+import { describeSnapshot } from "./native.ts";
 import {
 	actionableItems,
 	explanationText,
@@ -65,7 +67,10 @@ import {
 	readTodoMore,
 	TODO_MORE_ENTRY_TYPE,
 	type TodoItem,
+	type TodoMoreSnapshot,
 	type TodoMoreState,
+	todoMoreSnapshotSchema,
+	toSnapshot,
 	unexplainedItems,
 } from "./state.ts";
 
@@ -142,6 +147,7 @@ const reminderDetailsSchema = z.object({
 	items: z.array(z.object({ phase: z.string(), title: z.string() })),
 	attempt: z.number(),
 	max: z.number(),
+	more: todoMoreSnapshotSchema.optional(),
 });
 type ReminderDetails = z.infer<typeof reminderDetailsSchema>;
 
@@ -400,7 +406,7 @@ function checkCompletion(session: AgentSession, cycle: Cycle, count: number, mes
 		kind: "remind",
 		attempt,
 		text: reminderText(state, open, attempt, max),
-		details: { items: open.map(({ phase, item }) => ({ phase, title: item.title })), attempt, max },
+		details: { items: open.map(({ phase, item }) => ({ phase, title: item.title })), attempt, max, more: toSnapshot(state) },
 	};
 }
 // @upstream-end
@@ -665,15 +671,35 @@ function contextMessages(
 	return changed ? kept : undefined;
 }
 
+/** A reminder's display copy stays at its own event; terminal rendering remains the existing Text. */
+class NativeReminderText extends Text {
+	constructor(
+		text: string,
+		private readonly header: string,
+		private readonly snapshot: TodoMoreSnapshot,
+	) {
+		super(text, 0, 0);
+	}
+
+	override describe(): NativeNode {
+		return node(
+			"card",
+			{ role: "todo-more.reminder", tone: "warning", head: [span(this.header, "strong")] },
+			describeSnapshot(this.snapshot),
+		);
+	}
+}
+
 // @upstream adapted @oh-my-pi/pi-tui@18.10.1 src/chat/todo-reminder.ts#TodoReminderComponent
 const renderReminder: MessageRenderer = (message, _options, theme) => {
 	const parsed = reminderDetailsSchema.safeParse(message.details);
 	if (!parsed.success) return undefined;
-	const { items, attempt, max } = parsed.data;
+	const { items, attempt, max, more } = parsed.data;
 	const count = items.length;
 	const header = `${count} incomplete ${count === 1 ? "todo" : "todos"} - reminder ${attempt}/${max}`;
 	const todoList = items.map((todo) => `  ${theme.checkbox.unchecked} ${todo.title}`).join("\n");
-	return new Text(`${theme.fg("warning", `${theme.icon.warning} ${header}`)}\n\n${theme.italic(todoList)}`, 0, 0);
+	const text = `${theme.fg("warning", `${theme.icon.warning} ${header}`)}\n\n${theme.italic(todoList)}`;
+	return more === undefined ? new Text(text, 0, 0) : new NativeReminderText(text, header, more);
 };
 // @upstream-end
 
