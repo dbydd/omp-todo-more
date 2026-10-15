@@ -58,6 +58,7 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-sessi
 import { cfgTodoEager, cfgTodoReminders, cfgTodoRemindersMax } from "@oh-my-pi/pi-coding-agent/tools/settings";
 import { escapeXmlText } from "@oh-my-pi/pi-utils";
 import { errorText } from "./errors.ts";
+import { shouldSendStopReminder } from "./reminder-judge.ts";
 import {
 	actionableItems,
 	explanationText,
@@ -687,14 +688,15 @@ export function registerReminders(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer(REMINDER_TYPE, renderReminder);
 	pi.registerMessageRenderer(REMINDER_NOTICE_TYPE, renderReminder);
 
-	pi.on("session_stop", (event, ctx) => {
+	pi.on("session_stop", async (event, ctx) => {
 		try {
 			if (ctx.agent.kind !== "main") return undefined;
 			if (!event.stop_hook_active) cycle.reminderCount = 0;
 			const session = ownSession(ctx);
 			const message = terminalAnswer(event.last_assistant_message);
 			if (session === undefined || message === undefined) return undefined;
-			const completion = checkCompletion(session, cycle, cycle.reminderCount, message, readTodoMore(ctx.sessionManager.getBranch()));
+			const state = readTodoMore(ctx.sessionManager.getBranch());
+			const completion = checkCompletion(session, cycle, cycle.reminderCount, message, state);
 			switch (completion.kind) {
 				case "silent":
 					return undefined;
@@ -741,7 +743,7 @@ export function registerReminders(pi: ExtensionAPI): void {
 		cancelCutOff();
 		cutOff = {
 			ctx,
-			timer: ctx.setTimeout(() => {
+			timer: ctx.setTimeout(async () => {
 				cutOff = undefined;
 				try {
 					if (ownSession(ctx) !== session) return;
@@ -773,7 +775,7 @@ export function registerReminders(pi: ExtensionAPI): void {
 	pi.on("agent_start", () => cancelCutOff());
 	pi.on("session_shutdown", () => cancelCutOff());
 
-	pi.on("agent_end", (event, ctx) => {
+	pi.on("agent_end", async (event, ctx) => {
 		try {
 			if (event.willContinue === true) return;
 			const session = ownSession(ctx);
@@ -783,7 +785,8 @@ export function registerReminders(pi: ExtensionAPI): void {
 				const message = terminalAnswer(last);
 				if (message === undefined) return;
 				const branch = ctx.sessionManager.getBranch();
-				const completion = checkCompletion(session, cycle, remindersSinceUserMessage(branch), message, readTodoMore(branch));
+				const state = readTodoMore(branch);
+				const completion = checkCompletion(session, cycle, remindersSinceUserMessage(branch), message, state);
 				switch (completion.kind) {
 					case "silent":
 						return;

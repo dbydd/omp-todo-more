@@ -8,12 +8,16 @@ import type { AgentMessage, AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@oh-my-pi/pi-coding-agent";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { errorText } from "./errors.ts";
+import { shouldRemindPlan } from "./reminder-judge.ts";
 import { readTodoMore, type TodoMoreState, toSnapshot } from "./state.ts";
 
 const INIT_REMINDER =
 	'Todo is empty. Initialize it now with one complete Todo document: INIT "objective" "measure" "doneWhen", PHASE "name", and ADD "title" "explanation" minutes for every step, between *** Begin Todo and *** End Todo. Estimate each item yourself in positive integer minutes; no fractions or defaults. edit is blocked until the complete document succeeds and the list has items.';
 
 type HumanMessage = Extract<AgentMessage, { role: "user" | "custom" }>;
+
+/** The name the model calls the todo tool by. */
+const TODO_TOOL = "todo";
 
 /** Match OMP's user-authored queue predicate, excluding synthetic continuations. */
 function isHumanMessage(message: AgentMessage): message is HumanMessage {
@@ -80,8 +84,13 @@ export function registerPlanning(pi: ExtensionAPI): void {
 	const guarded = new WeakSet<AgentTool>();
 	const installEditGuard = (ctx: ExtensionContext): void => {
 		const session = AgentRegistry.global().get(ctx.agent.id)?.session;
-		const tool = session?.getToolByName("edit");
-		if (session == null || tool === undefined || guarded.has(tool)) return;
+		if (session == null) return;
+		// The precondition binds only a session that can satisfy it: without the
+		// tool there is no `op init` to run, so the guard would forbid `edit`
+		// outright and push the work into whole-file rewrites.
+		if (!session.getActiveToolNames().includes(TODO_TOOL)) return;
+		const tool = session.getToolByName("edit");
+		if (tool === undefined || guarded.has(tool)) return;
 		const execute = tool.execute.bind(tool);
 		tool.execute = async (...args) => {
 			try {
@@ -115,8 +124,20 @@ export function registerPlanning(pi: ExtensionAPI): void {
 		if (event.toolName === "edit") installSafely(ctx);
 	});
 
-	pi.on("context", (event, ctx) => {
+	pi.on("context", async (event, ctx) => {
 		try {
+			const session = AgentRegistry.global().get(ctx.agent.id)?.session;
+			// This reminder only asks a session to work on the list, which needs the
+			// tool: without it the wording names a call the session cannot make.
+			if (session?.getActiveToolNames().includes(TODO_TOOL) !== true) {
+				return undefined;
+			}
+			// The reminder itself is gated: a read-only session or one-shot delivery
+			// is not asked to keep a plan aligned it will never execute. Failure is
+			// silence, judged in parallel; the current request is not held back.
+			if (!(await shouldRemindPlan(ctx, pi, session))) {
+				return undefined;
+			}
 			const branch = ctx.sessionManager.getBranch();
 			const messages = event.messages.map((message): AgentMessage => {
 				if (!isHumanMessage(message)) return message;

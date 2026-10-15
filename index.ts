@@ -9,7 +9,7 @@
  *
  * Registers the tool `todo` (tool.ts, rendered by render.ts) and the hooks of
  * reminders.ts (stop reminder, mid-run nudge, eager prelude, goal-mode
- * context), plus `before_agent_start` to give `task:*` subagents the tool.
+ * context), plus `before_agent_start` to give every subagent the tool.
  * planning.ts wraps the registered `edit` execution so an empty list blocks
  * it (installed on session_start, before_agent_start and edit tool_call), and
  * appends a complete plan-check reminder to each real user message (`context`,
@@ -30,7 +30,7 @@
  * OMP drops `todo` from subagents that are not prewalk-armed: the executor
  * strips it at spawn and filters it out of extension-driven active-tool
  * changes (`task/executor.ts`, `isParentOwnedTool`). At every
- * `before_agent_start` of a `task:*` subagent the hook puts the tool back on
+ * `before_agent_start` of a subagent the hook puts the tool back on
  * that session: it re-activates the registered `todo`, or, in a
  * tool-restricted session whose registry holds no extension tools, installs it
  * as a host tool. Each session owns its own list.
@@ -56,13 +56,6 @@ import { registerUi } from "./src/ui.ts";
 
 const TOOL_NAME = "todo";
 
-const TODO_AGENTS: Record<string, true> = {
-	"task:high": true,
-	"task:mid": true,
-	"task:low": true,
-	"task:free": true,
-};
-
 /** Fields shared by the registered tool and the host-tool install, matching the native tool's. */
 const TOOL_FIELDS = {
 	name: TOOL_NAME,
@@ -84,15 +77,15 @@ const TOOL_FIELDS = {
 /** The AgentSession this extension instance serves, through the registry entry of its agent id. */
 const ownSession = (ctx: ExtensionContext): AgentSession | undefined => AgentRegistry.global().get(ctx.agent.id)?.session ?? undefined;
 
-const isTaskAgent = (ctx: ExtensionContext): boolean => {
-	if (ctx.agent.kind !== "sub") return false;
-	const ref = AgentRegistry.global().get(ctx.agent.id);
-	return ref !== undefined && Object.hasOwn(TODO_AGENTS, ref.displayName);
-};
+/**
+ * Subagent: put the tool back after the executor stripped `todo`. Filed by
+ * agent kind, never by registered name: a name allowlist silently misses every
+ * lane a deployment adds, leaving that agent without `todo` and, through the
+ * edit precondition, without `edit`.
+ */
+async function installForSubagent(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	if (ctx.agent.kind !== "sub") return;
 
-/** `task:*` subagent: put the tool back after the executor stripped `todo`. */
-async function installForTask(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	if (!isTaskAgent(ctx)) return;
 	const session = ownSession(ctx);
 	if (session === undefined) return;
 	if (session.getAllToolNames().includes(TOOL_NAME)) {
@@ -123,7 +116,7 @@ export default async function todoMore(pi: ExtensionAPI): Promise<void> {
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		try {
-			await installForTask(pi, ctx);
+			await installForSubagent(pi, ctx);
 		} catch (error) {
 			pi.logger.warn("todo-more could not install todo", { error: errorText(error) });
 		}
