@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Require a model-provided `estimatedMinutes` for every new Todo item and add `estimate` to supply or revise budgets without erasing elapsed work.
+- Persist active wall-clock intervals through status changes, native edits and session reloads; explicitly mark historical/native items as unestimated.
+- Deliver one system overtime warning per budget, preserving outcome and quality while asking agents to investigate, reconsider their approach, continue and consult subagents or their parent. Idle delivery records the warning without starting a turn.
+- Show estimates in ANSI/native tool cards and the Todo overlay, and update eager/planning guidance to require estimates.
+
 ## 0.1.0
 
 - Extracted the rich Todo domain, tool, ANSI rendering, reminders and planning guard from omp-config into an independent OMP package.

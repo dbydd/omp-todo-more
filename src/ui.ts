@@ -19,7 +19,7 @@ import {
 import { saveTodoEdit, type TodoEdit } from "./edit.ts";
 import { errorText } from "./errors.ts";
 import { describeSnapshot } from "./native.ts";
-import { goalLines, readTodoMore, toSnapshot } from "./state.ts";
+import { goalLines, readTodoMore, timeEstimateText, toSnapshot } from "./state.ts";
 
 const FIELDS = ["objective", "measure", "doneWhen"] as const;
 type GoalField = (typeof FIELDS)[number];
@@ -344,6 +344,7 @@ class TodoPanel implements Component {
 						for (const item of phase.items) {
 							lines.push(
 								`${item.title} [${item.status}]`,
+								timeEstimateText(item.time),
 								item.explanation.kind === "explained" ? item.explanation.text : "[explanation missing]",
 								`Blocker: ${item.blocker ?? "(none)"}`,
 							);

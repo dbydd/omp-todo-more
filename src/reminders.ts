@@ -66,6 +66,7 @@ import {
 	TODO_MORE_ENTRY_TYPE,
 	type TodoItem,
 	type TodoMoreState,
+	timeEstimateText,
 	unexplainedItems,
 } from "./state.ts";
 
@@ -367,7 +368,7 @@ function reminderText(state: ListState, open: readonly OpenItem[], attempt: numb
 	const todoList = byPhase(open)
 		.map(
 			(phase) =>
-				`- ${phase.name}\n${phase.items.map((item) => `  - ${item.title}\n    ${explanationText(item).replaceAll("\n", "\n    ")}`).join("\n")}`,
+				`- ${phase.name}\n${phase.items.map((item) => `  - ${item.title}\n    ${explanationText(item).replaceAll("\n", "\n    ")}\n    ${timeEstimateText(item.time)}`).join("\n")}`,
 		)
 		.join("\n");
 	return (
@@ -475,13 +476,13 @@ function eagerTodoText(todo: string, forced: boolean): string {
 You MUST call \`${todo}\` first in this turn.
 You MUST initialize the todo list with a single \`init\` op that carries the \`goal\` {objective, measure, doneWhen}: what this work is, how its result is measured, how far it must go to count as done.
 You MUST cover the entire request from investigation through implementation and verification — not just the next immediate step.
-Each item is {title, explanation}: the title MUST be a concise, specific 5-10 word label; the explanation says what the item covers and what shows it is finished.
-The \`init\` op only accepts the goal, phase names and {title, explanation} items; do not invent other fields.
+Each item is {title, explanation, estimatedMinutes}: the title MUST be a concise, specific 5-10 word label; the explanation says what the item covers and what shows it is finished; estimatedMinutes is your positive, finite estimate in minutes (fractions allowed). Estimate every item yourself, not with a default.
+The \`init\` op only accepts the goal, phase names and {title, explanation, estimatedMinutes} items; do not invent other fields.
 
 After \`${todo}\` succeeds, continue the request in the same turn.
 NEVER call \`${todo}\` again unless task state has materially changed.`
 		: `Consider calling \`${todo}\` first to lay out a phased plan with a single \`init\` op. A good list covers the whole request — investigation through implementation and verification — not just the next step, with specific items a future turn could execute without re-planning.
-The \`init\` op carries the \`goal\` {objective, measure, doneWhen} and items of {title, explanation}: a concise, specific 5-10 word title, and an explanation of what the item covers and what shows it is finished; don't invent other fields.
+The \`init\` op carries the \`goal\` {objective, measure, doneWhen} and items of {title, explanation, estimatedMinutes}: a concise, specific 5-10 word title, an explanation of what the item covers and what shows it is finished, and your own positive, finite estimate in minutes (fractions allowed); don't invent other fields or use default estimates.
 If you create the list, continue the request in the same turn and avoid re-calling \`${todo}\` unless task state materially changes.`;
 	return `<system-reminder>\n${body}\n</system-reminder>\n`;
 }
@@ -611,7 +612,7 @@ function goalTodoContext(session: AgentSession, state: TodoMoreState): string | 
 			} else {
 				open++;
 			}
-			return `  - [${item.status}] ${sanitizeGoalTodoText(item.title)}: ${sanitizeGoalTodoText(explanationText(item))}`;
+			return `  - [${item.status}] ${sanitizeGoalTodoText(item.title)}: ${sanitizeGoalTodoText(explanationText(item))}; ${sanitizeGoalTodoText(timeEstimateText(item.time))}`;
 		}),
 	]);
 	const goal =

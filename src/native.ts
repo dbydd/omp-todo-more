@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { type NativeChild, node, span, stableKey } from "@oh-my-pi/pi-tui";
 import { detailsSchema, parseCall } from "./render.ts";
-import type { TodoMoreSnapshot } from "./state.ts";
+import { type TodoMoreSnapshot, timeEstimateText } from "./state.ts";
 import type { parametersSchema, TodoMoreDetails } from "./tool.ts";
 
 /** A presentation of a snapshot only; callers must read the branch before editing. */
@@ -29,6 +29,7 @@ export function describeSnapshot(snapshot: TodoMoreSnapshot, editable = false, s
 					{ gap: "xs" },
 					[
 						node("text", { spans: [span(item.title, "strong"), span(` [${item.status}]`, "muted")], wrap: "word" }, undefined, "title"),
+						node("text", { text: timeEstimateText(item.time), wrap: "word" }, undefined, "estimate"),
 						node("text", { text: `Explanation: ${item.explanation ?? "[explanation missing]"}`, wrap: "word" }, undefined, "explanation"),
 						node("text", { text: `Blocker: ${item.blocker ?? "(none)"}`, wrap: "word" }, undefined, "blocker"),
 						...(editable

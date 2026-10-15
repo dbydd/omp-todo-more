@@ -13,8 +13,18 @@ function currentPhases(): readonly TodoPhase[] {
 		{
 			name: "Delivery",
 			items: [
-				{ title: "Edit goal", explanation: { kind: "explained", text: "Replace the objective" }, status: "in_progress" },
-				{ title: "Verify resume", explanation: { kind: "explained", text: "Inspect saved fields" }, status: "pending" },
+				{
+					title: "Edit goal",
+					explanation: { kind: "explained", text: "Replace the objective" },
+					status: "in_progress",
+					time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 2.5, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
+				},
+				{
+					title: "Verify resume",
+					explanation: { kind: "explained", text: "Inspect saved fields" },
+					status: "pending",
+					time: { kind: "estimated", budgetId: "verify-resume-budget", minutes: 4, elapsedMs: 0, runningSince: null },
+				},
 			],
 		},
 		{
@@ -25,9 +35,20 @@ function currentPhases(): readonly TodoPhase[] {
 					explanation: { kind: "explained", text: "Wait for the environment" },
 					status: "blocked",
 					blocker: "Runtime is unavailable",
+					time: { kind: "estimated", budgetId: "check-runtime-budget", minutes: 6, elapsedMs: 35_000, runningSince: null },
 				},
-				{ title: "Review results", explanation: { kind: "missing" }, status: "completed" },
-				{ title: "Old approach", explanation: { kind: "explained", text: "No longer needed" }, status: "abandoned" },
+				{
+					title: "Review results",
+					explanation: { kind: "missing" },
+					status: "completed",
+					time: { kind: "estimated", budgetId: "review-results-budget", minutes: 3, elapsedMs: 90_000, runningSince: null },
+				},
+				{
+					title: "Old approach",
+					explanation: { kind: "explained", text: "No longer needed" },
+					status: "abandoned",
+					time: { kind: "missing" },
+				},
 			],
 		},
 	];
@@ -48,18 +69,31 @@ function expectRejected(state: TodoMoreState, edit: TodoEdit, message: string): 
 
 describe("applyTodoEdit", () => {
 	const latestItems: readonly TodoItem[] = [
-		{ title: "Verify resume", explanation: { kind: "explained", text: "Earlier draft" }, status: "completed" },
+		{
+			title: "Verify resume",
+			explanation: { kind: "explained", text: "Earlier draft" },
+			status: "completed",
+			time: { kind: "missing" },
+		},
 		{
 			title: "Verify resume",
 			explanation: { kind: "explained", text: "Earlier draft" },
 			status: "completed",
 			blocker: "Previously waiting for runtime",
+			time: { kind: "estimated", budgetId: "completed-resume-budget", minutes: 2, elapsedMs: 105_000, runningSince: null },
 		},
 		{
 			title: "Verify resume",
 			explanation: { kind: "explained", text: "Earlier draft" },
 			status: "blocked",
 			blocker: "Runtime is unavailable",
+			time: { kind: "estimated", budgetId: "blocked-resume-budget", minutes: 5, elapsedMs: 45_000, runningSince: null },
+		},
+		{
+			title: "Verify resume",
+			explanation: { kind: "explained", text: "Earlier draft" },
+			status: "in_progress",
+			time: { kind: "estimated", budgetId: "running-resume-budget", minutes: 1.5, elapsedMs: 20_000, runningSince: 1_800_000_060_000 },
 		},
 	];
 
@@ -84,6 +118,7 @@ describe("applyTodoEdit", () => {
 								title: "Edited task",
 								explanation: "Verified after resume",
 								status: latestItem.status,
+								time: latestItem.time,
 								...(latestItem.blocker === undefined ? {} : { blocker: latestItem.blocker }),
 							},
 						],
@@ -149,8 +184,18 @@ describe("applyTodoEdit", () => {
 				{
 					name: "Delivery",
 					items: [
-						{ title: "Verify resume", explanation: "Saved in the current order", status: "pending" },
-						{ title: "Edit goal", explanation: "Replace the objective", status: "in_progress" },
+						{
+							title: "Verify resume",
+							explanation: "Saved in the current order",
+							status: "pending",
+							time: { kind: "estimated", budgetId: "verify-resume-budget", minutes: 4, elapsedMs: 0, runningSince: null },
+						},
+						{
+							title: "Edit goal",
+							explanation: "Replace the objective",
+							status: "in_progress",
+							time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 2.5, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
+						},
 					],
 				},
 			],

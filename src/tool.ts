@@ -5,10 +5,12 @@ import type { TodoPhase as HostTodoPhase, TodoCompletionTransition } from "@oh-m
 import { commitTodoState } from "./commit.ts";
 import {
 	type Explanation,
+	estimatedMinutesSchema,
 	explanationText,
 	type GoalState,
 	goalLines,
 	hostPhases,
+	type ItemTime,
 	readTodoMore,
 	stateOf,
 	TODO_MORE_RESULT_MARK,
@@ -16,22 +18,25 @@ import {
 	type TodoMoreSnapshot,
 	type TodoMoreState,
 	type TodoStatus,
+	timeEstimateText,
 	todoGoalSchema,
 	toSnapshot,
+	transitionTime,
 	unexplainedItems,
 } from "./state.ts";
 
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/prompts/tools/todo.md#*
 export const DESCRIPTION = `Tasks identified by verbatim title, NEVER generated IDs (task-1). Unique, stable titles/phase names; lost text: view, NEVER guess.
-Every item is {title, explanation}: title is the short name later ops target as \`task\`; explanation says what the item covers and what shows it is finished. An item added outside this tool has no explanation yet: give it one with \`explain\` {task, explanation}, which also rewrites an existing explanation.
+Every item is {title, explanation, estimatedMinutes}: title is the short name later ops target as \`task\`; explanation says what the item covers and what shows it is finished; estimatedMinutes is your positive, finite wall-time estimate in minutes (fractions allowed). Estimate every item yourself; do not invent a default. An item added outside this tool needs an explanation via \`explain\` {task, explanation} and a time estimate via \`estimate\` {task, estimatedMinutes}. Both operations also revise existing values.
 \`goal\` is {objective, measure, doneWhen}: what this work is, how its result is measured, how far it must go to count as done. REQUIRED on init and whenever the list has none; any later mutation may carry a new goal that replaces it; NEVER on view. An emptied list drops its goal.
 Before touching anything, init for any multi-step work, requested task sets, or new instructions; every change is logged per context and read back through \`ctx\`. The list tracks the current scope, not the first plan: the moment the work changes — new or revised instructions, a changed plan, findings that add or remove steps — update it (append, rm/drop, or re-init). MUST list EVERY user item separately (phased/numbered/bulleted/N); NEVER omit or remember leftovers.
 After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Blocked NEVER starts automatically; unblock returns pending. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
 External waits (user/agent/service): block with optional reason suppresses stop reminder, starts next pending. Unblock when actionable; append a clearing task for agent-actionable blocker.
+Only in_progress time counts; pending/blocked/closed pause it. Repeated start, view and explanation edits do not reset elapsed time. Re-estimating preserves elapsed time and gives the changed budget one new overtime warning; do not re-init or inflate estimates to hide overruns. A time estimate is not a deadline, permission to lower expectations/quality, or a reason to stop. On an overtime system warning, verify the cause, reconsider the approach, consult a subagent (or your parent) where useful, and keep advancing the full task.
 NEVER call todo alone: init with first work; done/start with next action.`;
 // @upstream-end
 
-export const OPS = ["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view", "explain"] as const;
+export const OPS = ["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view", "explain", "estimate"] as const;
 export type Op = (typeof OPS)[number];
 
 const goalParam = z
@@ -45,6 +50,7 @@ const goalParam = z
 const itemParam = z.object({
 	title: z.string().describe("short stable name; the `task` value of later ops"),
 	explanation: z.string().describe("what the item covers and what shows it is finished"),
+	estimatedMinutes: estimatedMinutesSchema.describe("your estimated in_progress wall time in minutes; positive, finite, fractions allowed"),
 });
 type ItemParam = z.infer<typeof itemParam>;
 
@@ -60,6 +66,7 @@ const fields = {
 	items: z.array(itemParam).optional().describe("tasks for flat init or append"),
 	reason: z.string().optional().describe("blocker note for block"),
 	explanation: z.string().optional().describe("new explanation for explain"),
+	estimatedMinutes: estimatedMinutesSchema.optional().describe("new total time estimate for estimate; preserves elapsed time"),
 };
 // @upstream-end
 
@@ -72,7 +79,7 @@ type Input = z.infer<typeof inputSchema>;
 type Params = Input & { readonly op: Op };
 
 /** Mutable working copy of the list while one call applies. */
-type WorkItem = { title: string; explanation: Explanation; status: TodoStatus; blocker?: string };
+type WorkItem = { title: string; explanation: Explanation; time: ItemTime; status: TodoStatus; blocker?: string };
 type WorkPhase = { name: string; items: WorkItem[] };
 
 /** Details of every result: native-compatible fields for the host, plus the marker and the snapshot for todo-more readers. */
@@ -181,6 +188,13 @@ function targets(phases: WorkPhase[], params: Params, errors: string[]): WorkIte
 const explained = (item: ItemParam): WorkItem => ({
 	title: item.title,
 	explanation: { kind: "explained", text: item.explanation },
+	time: {
+		kind: "estimated",
+		budgetId: crypto.randomUUID(),
+		minutes: item.estimatedMinutes,
+		elapsedMs: 0,
+		runningSince: null,
+	},
 	status: "pending",
 });
 
@@ -309,6 +323,20 @@ function applyOp(phases: WorkPhase[], params: Params, errors: string[]): WorkPha
 			if (hit && params.explanation !== undefined) hit.item.explanation = { kind: "explained", text: params.explanation };
 			return phases;
 		}
+		case "estimate": {
+			const hit = resolveTask(phases, params.task, errors);
+			if (!hit || params.estimatedMinutes === undefined) return phases;
+			const time = hit.item.time;
+			if (time.kind === "estimated" && time.minutes === params.estimatedMinutes) return phases;
+			hit.item.time = {
+				kind: "estimated",
+				budgetId: crypto.randomUUID(),
+				minutes: params.estimatedMinutes,
+				elapsedMs: time.kind === "estimated" ? time.elapsedMs : 0,
+				runningSince: time.kind === "estimated" ? time.runningSince : null,
+			};
+			return phases;
+		}
 		case "view":
 			return phases;
 		default: {
@@ -357,6 +385,7 @@ function addedItems(params: Params): ItemParam[] {
 		case "unblock":
 		case "view":
 		case "explain":
+		case "estimate":
 			return [];
 		default: {
 			const unreachable: never = params.op;
@@ -385,6 +414,8 @@ function ruleErrors(params: Params, previous: TodoMoreState): string[] {
 	if (params.op === "explain" && (params.explanation === undefined || params.explanation.trim().length === 0)) {
 		errors.push("explain requires a non-empty explanation");
 	}
+	if (params.op === "estimate" && params.estimatedMinutes === undefined) errors.push("estimate requires estimatedMinutes");
+	if (params.op !== "estimate" && params.estimatedMinutes !== undefined) errors.push("estimatedMinutes is only valid on estimate");
 	return errors;
 }
 
@@ -445,6 +476,7 @@ function formatSummary(state: TodoMoreState, errors: readonly string[], readOnly
 							: "";
 			lines.push(`    - ${checkbox} ${item.title}${tag}`);
 			if (isOpen(item.status) || item.status === "blocked") lines.push(`        ${explanationText(item)}`);
+			lines.push(`        ${timeEstimateText(item.time)}`);
 		}
 	}
 	const unexplained = unexplainedItems(state);
@@ -498,6 +530,10 @@ export function runTodo(pi: ExtensionAPI, session: AgentSession, raw: unknown): 
 	const updated = applyOp(working(previous), params, errors);
 	if (errors.length > 0) return result(session, previous, formatSummary(previous, errors, false), { op: params.op, isError: true });
 	normalizeInProgress(updated);
+	const now = Date.now();
+	for (const phase of updated) {
+		for (const item of phase.items) item.time = transitionTime(item.time, item.status, now);
+	}
 
 	const goal: GoalState =
 		params.goal !== undefined
