@@ -1,8 +1,7 @@
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
-import { z } from "@oh-my-pi/pi-coding-agent";
-import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { TodoPhase as HostTodoPhase, TodoCompletionTransition } from "@oh-my-pi/pi-tui/tools/todo";
-import { commitTodoState } from "./commit.ts";
+import { commitTodoState, type TodoSession } from "./commit.ts";
+import { customFormat, parametersSchema, parseTodo, type TodoCommand, type TodoTarget } from "./protocol.ts";
 import {
 	type Explanation,
 	explanationText,
@@ -22,54 +21,46 @@ import {
 } from "./state.ts";
 
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/prompts/tools/todo.md#*
-export const DESCRIPTION = `Tasks identified by verbatim title, NEVER generated IDs (task-1). Unique, stable titles/phase names; lost text: view, NEVER guess.
-Every item is {title, explanation}: title is the short name later ops target as \`task\`; explanation says what the item covers and what shows it is finished. An item added outside this tool has no explanation yet: give it one with \`explain\` {task, explanation}, which also rewrites an existing explanation.
-\`goal\` is {objective, measure, doneWhen}: what this work is, how its result is measured, how far it must go to count as done. REQUIRED on init and whenever the list has none; any later mutation may carry a new goal that replaces it; NEVER on view. An emptied list drops its goal.
-Before touching anything, init for any multi-step work, requested task sets, or new instructions; every change is logged per context and read back through \`ctx\`. The list tracks the current scope, not the first plan: the moment the work changes — new or revised instructions, a changed plan, findings that add or remove steps — update it (append, rm/drop, or re-init). MUST list EVERY user item separately (phased/numbered/bulleted/N); NEVER omit or remember leftovers.
-After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Blocked NEVER starts automatically; unblock returns pending. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
-External waits (user/agent/service): block with optional reason suppresses stop reminder, starts next pending. Unblock when actionable; append a clearing task for agent-actionable blocker.
-NEVER call todo alone: init with first work; done/start with next action.`;
+export const DESCRIPTION = `Batch Todo initialization and edits in one document; do not call once per task.
+Input is plain text on custom-tool providers, otherwise {input: "the same document"}.
+Use exactly this envelope, uppercase commands, one command per line, and JSON-quoted strings (escape newlines as \\n):
+*** Begin Todo
+INIT "Deliver feature" "User path passes" "Runtime verified"
+PHASE "Implementation"
+ADD "Implement feature" "Cover the request; finish when behavior works"
+ADD "Verify feature" "Exercise the real entry and observe its result"
+*** End Todo
+An edit can combine DONE "Implement feature", START "Verify feature", EXPLAIN "Verify feature" "Revised scope", and PHASE/ADD blocks in one document (each on its own line).
+INIT replaces the list, must be first and unique, and carries objective, measure, doneWhen in that order. Its following PHASE/ADD blocks form one init; ADD before a PHASE uses "Tasks".
+PHASE "name" followed by one or more ADD "title" "explanation" appends outside INIT; each PHASE must have ADD, and its scope ends at the first non-ADD command. Status selectors never inherit PHASE.
+GOAL "objective" "measure" "doneWhen" replaces all goal fields on an existing list. Put GOAL first if the list lacks one.
+START "title" and EXPLAIN "title" "explanation" target a verbatim complete title.
+DONE, DROP and RM take "title", PHASE "name", or ALL. BLOCK and UNBLOCK take "title" or PHASE "name"; BLOCK may add a quoted reason. RM ALL clears the list and its goal.
+VIEW must be the sole command; mutations already return the full resulting list.
+Titles and phase names are unique and stable. NEVER use generated IDs or guess lost titles; use VIEW.
+Partial input is a preview, not saved state. The complete document is validated in order and saved once; any syntax or operation error rejects the whole batch.
+Before substantive multi-step work, INIT the entire requested plan with a goal and an explanation for every item. MUST list EVERY requested item separately; NEVER omit work or remember leftovers. Revise the goal, steps, explanations and statuses together when new instructions or material scope changes require it.
+After each logical task operation, no active means earliest pending starts in phase order; only the earliest active remains; blocked never starts automatically. Completion can move the pointer back to earlier open work without reopening completed items. GOAL does not normalize task statuses.
+BLOCK external waits (user, agent, service) with an optional reason to suppress stop reminders; UNBLOCK returns pending. Append a clearing task for an agent-actionable blocker. Mark completion immediately and keep working in phase order.
+NEVER call todo alone: initialize with first work and update with the next action.`;
 // @upstream-end
 
-export const OPS = ["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view", "explain"] as const;
+export const OPS = ["init", "start", "done", "rm", "drop", "block", "unblock", "append", "view", "explain", "goal"] as const;
 export type Op = (typeof OPS)[number];
+export const RESULT_OPS = [...OPS, "batch"] as const;
+export { customFormat, parametersSchema };
 
-const goalParam = z
-	.object({
-		objective: z.string().describe("what this work is"),
-		measure: z.string().describe("how the result is measured"),
-		doneWhen: z.string().describe("how far the work must go to count as done"),
-	})
-	.describe("required on init and whenever the list has none; replaces the goal on other mutations");
-
-const itemParam = z.object({
-	title: z.string().describe("short stable name; the `task` value of later ops"),
-	explanation: z.string().describe("what the item covers and what shows it is finished"),
-});
-type ItemParam = z.infer<typeof itemParam>;
-
-// @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#todoSchema
-const fields = {
-	goal: goalParam.optional(),
-	list: z
-		.array(z.object({ phase: z.string(), items: z.array(itemParam).min(1) }))
-		.optional()
-		.describe("phases for init"),
-	task: z.string().optional().describe("verbatim task title"),
-	phase: z.string().optional(),
-	items: z.array(itemParam).optional().describe("tasks for flat init or append"),
-	reason: z.string().optional().describe("blocker note for block"),
-	explanation: z.string().optional().describe("new explanation for explain"),
+type ItemParam = { title: string; explanation: string };
+type Params = {
+	readonly op: Op;
+	readonly goal?: TodoGoal;
+	readonly list?: { phase: string; items: ItemParam[] }[];
+	readonly task?: string;
+	readonly phase?: string;
+	readonly items?: ItemParam[];
+	readonly reason?: string;
+	readonly explanation?: string;
 };
-// @upstream-end
-
-/** The schema the model sees. */
-export const parametersSchema = z.object({ op: z.enum(OPS), ...fields });
-
-/** What execute accepts: the tool sets `lenientArgValidation`, so a call without `op` arrives raw. */
-const inputSchema = z.object({ op: z.enum(OPS).optional(), ...fields });
-type Input = z.infer<typeof inputSchema>;
-type Params = Input & { readonly op: Op };
 
 /** Mutable working copy of the list while one call applies. */
 type WorkItem = { title: string; explanation: Explanation; status: TodoStatus; blocker?: string };
@@ -77,7 +68,10 @@ type WorkPhase = { name: string; items: WorkItem[] };
 
 /** Details of every result: native-compatible fields for the host, plus the marker and the snapshot for todo-more readers. */
 export type TodoMoreDetails = {
-	op?: Op;
+	op?: (typeof RESULT_OPS)[number];
+	operations?: Op[];
+	/** Ordered, accepted logical operations for history consumers; never emitted for rejected batches. */
+	changes?: Params[];
 	phases: HostTodoPhase[];
 	storage: "session" | "memory";
 	completedTasks?: TodoCompletionTransition[];
@@ -186,8 +180,7 @@ const explained = (item: ItemParam): WorkItem => ({
 
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#initPhases
 function initPhases(params: Params, errors: string[]): WorkPhase[] {
-	const list =
-		params.list ?? (params.items && params.items.length > 0 ? [{ phase: params.phase ?? "Tasks", items: params.items }] : undefined);
+	const list = params.list;
 	if (!list) {
 		errors.push("Missing list for init operation");
 		return [];
@@ -310,6 +303,7 @@ function applyOp(phases: WorkPhase[], params: Params, errors: string[]): WorkPha
 			return phases;
 		}
 		case "view":
+		case "goal":
 			return phases;
 		default: {
 			const unreachable: never = params.op;
@@ -319,34 +313,11 @@ function applyOp(phases: WorkPhase[], params: Params, errors: string[]): WorkPha
 }
 // @upstream-end
 
-// @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#inferTodoOp
-function inferOp(input: Input, hasItems: boolean): Op | undefined {
-	if (input.list !== undefined && input.list.length > 0) return "init";
-	if (input.items !== undefined && input.items.length > 0) {
-		if (input.phase) return "append";
-		if (!hasItems) return "init";
-	}
-	return undefined;
-}
-// @upstream-end
-
-type Parsed = { readonly kind: "ok"; readonly params: Params } | { readonly kind: "invalid"; readonly message: string };
-
-// @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#resolveTodoParams
-function parseParams(raw: unknown, hasItems: boolean): Parsed {
-	const parsed = inputSchema.safeParse(raw);
-	if (!parsed.success) return { kind: "invalid", message: `Invalid todo arguments: ${parsed.error.message}` };
-	const op = parsed.data.op ?? inferOp(parsed.data, hasItems);
-	if (op === undefined) return { kind: "invalid", message: "Invalid todo arguments: op must be provided" };
-	return { kind: "ok", params: { ...parsed.data, op } };
-}
-// @upstream-end
-
-/** Items this call adds, from `list` (init) or `items` (flat init, append). */
+/** Items introduced by an initialization or append block. */
 function addedItems(params: Params): ItemParam[] {
 	switch (params.op) {
 		case "init":
-			return params.list?.flatMap((phase) => phase.items) ?? params.items ?? [];
+			return params.list?.flatMap((phase) => phase.items) ?? [];
 		case "append":
 			return params.items ?? [];
 		case "start":
@@ -357,6 +328,7 @@ function addedItems(params: Params): ItemParam[] {
 		case "unblock":
 		case "view":
 		case "explain":
+		case "goal":
 			return [];
 		default: {
 			const unreachable: never = params.op;
@@ -369,10 +341,10 @@ function addedItems(params: Params): ItemParam[] {
 function ruleErrors(params: Params, previous: TodoMoreState): string[] {
 	const errors: string[] = [];
 	const hasGoal = previous.kind === "list" && previous.goal.kind === "set";
-	if (params.op === "view") {
-		if (params.goal !== undefined) errors.push("goal cannot be set on view");
-	} else if (params.goal === undefined && (params.op === "init" || !hasGoal)) {
-		errors.push(params.op === "init" ? "init requires goal" : "the list has no goal: pass goal with this call");
+	if (params.op !== "view" && params.goal === undefined && !hasGoal) {
+		errors.push(
+			previous.kind === "empty" ? "Todo list is empty: use INIT to create it" : "The list has no goal: put GOAL before other mutations",
+		);
 	}
 	if (params.goal !== undefined && !todoGoalSchema.safeParse(params.goal).success) {
 		errors.push("goal objective, measure and doneWhen must not be empty");
@@ -400,7 +372,7 @@ function formatSummary(state: TodoMoreState, errors: readonly string[], readOnly
 	}
 	const { phases } = state;
 	if (state.goal.kind === "set") lines.push("Goal:", ...goalLines(state.goal.goal).map((line) => `  ${line}`));
-	else lines.push("Goal: none yet — pass goal with the next mutation.");
+	else lines.push("Goal: none yet — put GOAL first in the next Todo document.");
 	const remaining = phases.flatMap((phase) =>
 		phase.items.filter((item) => isOpen(item.status)).map((item) => ({ item, phase: phase.name })),
 	);
@@ -450,20 +422,20 @@ function formatSummary(state: TodoMoreState, errors: readonly string[], readOnly
 	const unexplained = unexplainedItems(state);
 	if (unexplained.length > 0) {
 		lines.push(
-			`Items without an explanation (${unexplained.length}); add one with op explain: ${unexplained.map((item) => `"${item.title}"`).join(", ")}`,
+			`Items without an explanation (${unexplained.length}); batch EXPLAIN commands: ${unexplained.map((item) => JSON.stringify(item.title)).join(", ")}`,
 		);
 	}
 	return lines.join("\n");
 }
 // @upstream-end
 
-const storageOf = (session: AgentSession): "session" | "memory" => (session.sessionManager.getSessionFile() ? "session" : "memory");
+const storageOf = (session: TodoSession): "session" | "memory" => (session.sessionManager.getSessionFile() ? "session" : "memory");
 
 function result(
-	session: AgentSession,
+	session: TodoSession,
 	state: TodoMoreState,
 	text: string,
-	extra: { op?: Op; completedTasks?: TodoCompletionTransition[]; isError?: true },
+	extra: { op?: TodoMoreDetails["op"]; operations?: Op[]; changes?: Params[]; completedTasks?: TodoCompletionTransition[]; isError?: true },
 ): AgentToolResult<TodoMoreDetails> {
 	const details: TodoMoreDetails = {
 		phases: hostPhases(state),
@@ -473,44 +445,136 @@ function result(
 	};
 	if (extra.op !== undefined) details.op = extra.op;
 	if (extra.completedTasks !== undefined && extra.completedTasks.length > 0) details.completedTasks = extra.completedTasks;
+	if (extra.operations !== undefined) details.operations = extra.operations;
+	if (extra.changes !== undefined) details.changes = extra.changes;
 	return extra.isError ? { content: [{ type: "text", text }], details, isError: true } : { content: [{ type: "text", text }], details };
 }
 
+/** Translate selectors without conflating the quoted title "ALL" with the ALL selector. */
+function targetParams(target: TodoTarget): Pick<Params, "task" | "phase"> {
+	switch (target.kind) {
+		case "task":
+			return { task: target.title };
+		case "phase":
+			return { phase: target.name };
+		case "all":
+			return {};
+	}
+}
+
+type Operations = { kind: "ok"; params: Params[] } | { kind: "invalid"; message: string };
+
+/** PHASE scopes additions only; every append block is one existing logical operation. */
+function operations(commands: TodoCommand[]): Operations {
+	const params: Params[] = [];
+	for (let index = 0; index < commands.length; index++) {
+		const command = commands[index]!;
+		switch (command.kind) {
+			case "init": {
+				const list: NonNullable<Params["list"]> = [];
+				let phase: (typeof list)[number] | undefined;
+				while (index + 1 < commands.length) {
+					const next = commands[index + 1]!;
+					if (next.kind === "phase") {
+						if (phase && phase.items.length === 0) return { kind: "invalid", message: `PHASE "${phase.phase}" needs ADD` };
+						phase = { phase: next.name, items: [] };
+						list.push(phase);
+					} else if (next.kind === "add") {
+						if (!phase) {
+							phase = { phase: "Tasks", items: [] };
+							list.push(phase);
+						}
+						phase.items.push({ title: next.title, explanation: next.explanation });
+					} else break;
+					index++;
+				}
+				if (phase && phase.items.length === 0) return { kind: "invalid", message: `PHASE "${phase.phase}" needs ADD` };
+				if (list.length === 0) return { kind: "invalid", message: "INIT needs at least one ADD" };
+				params.push({ op: "init", goal: command.goal, list });
+				break;
+			}
+			case "phase": {
+				const items: ItemParam[] = [];
+				while (commands[index + 1]?.kind === "add") {
+					const next = commands[++index]!;
+					if (next.kind === "add") items.push({ title: next.title, explanation: next.explanation });
+				}
+				if (items.length === 0) return { kind: "invalid", message: `PHASE "${command.name}" needs ADD` };
+				params.push({ op: "append", phase: command.name, items });
+				break;
+			}
+			case "add":
+				return { kind: "invalid", message: "ADD outside INIT requires a PHASE block" };
+			case "goal":
+				params.push({ op: "goal", goal: command.goal });
+				break;
+			case "start":
+				params.push({ op: "start", task: command.title });
+				break;
+			case "explain":
+				params.push({ op: "explain", task: command.title, explanation: command.explanation });
+				break;
+			case "done":
+			case "drop":
+			case "rm":
+			case "unblock":
+				params.push({ op: command.kind, ...targetParams(command.target) });
+				break;
+			case "block":
+				params.push({ op: "block", ...targetParams(command.target), reason: command.reason });
+				break;
+			case "view":
+				params.push({ op: "view" });
+				break;
+			default: {
+				const unreachable: never = command;
+				throw new Error(`Unexpected todo command: ${String(unreachable)}`);
+			}
+		}
+	}
+	return { kind: "ok", params };
+}
+
 /**
- * One `todo` call on `session`. The list is read from the branch; a successful
- * mutation appends a full snapshot entry at once (the next call of the same
- * batch reads it before this call's tool result reaches the branch) and pushes
- * the host projection into the session's TodoTracker. Expected argument and
- * rule errors discard the whole call; projection failure reports the accepted branch state.
+ * Streamed arguments are display-only intent. Execute reparses the complete document,
+ * validates each logical operation against its predecessor, and commits exactly once.
  */
-// @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#TodoTool.execute
-export function runTodo(session: AgentSession, raw: unknown): AgentToolResult<TodoMoreDetails> {
+export function runTodo(session: TodoSession, raw: unknown): AgentToolResult<TodoMoreDetails> {
 	const previous = readTodoMore(session.sessionManager.getBranch());
-	const parsed = parseParams(raw, previous.kind === "list");
+	const input = parametersSchema.safeParse(raw);
+	if (!input.success) return result(session, previous, `Invalid todo arguments: ${input.error.message}`, { isError: true });
+	const parsed = parseTodo(input.data.input);
 	if (parsed.kind === "invalid") return result(session, previous, parsed.message, { isError: true });
-	const { params } = parsed;
-	const rules = ruleErrors(params, previous);
-	if (rules.length > 0) return result(session, previous, formatSummary(previous, rules, true), { op: params.op, isError: true });
-	if (params.op === "view") return result(session, previous, formatSummary(previous, [], true), { op: "view" });
+	const batch = operations(parsed.commands);
+	if (batch.kind === "invalid") return result(session, previous, batch.message, { isError: true });
+	const ops = batch.params.map((params) => params.op);
+	const op = ops.length === 1 ? ops[0]! : "batch";
+	if (op === "view") return result(session, previous, formatSummary(previous, [], true), { op });
 
 	const before = working(previous);
-	const errors: string[] = [];
-	const updated = applyOp(working(previous), params, errors);
-	if (errors.length > 0) return result(session, previous, formatSummary(previous, errors, false), { op: params.op, isError: true });
-	normalizeInProgress(updated);
-
-	const goal: GoalState =
-		params.goal !== undefined
-			? { kind: "set", goal: params.goal satisfies TodoGoal }
-			: previous.kind === "list"
-				? previous.goal
-				: { kind: "missing" };
-	const next = stateOf(goal, updated);
+	let phases = working(previous);
+	let next = previous;
+	for (const params of batch.params) {
+		const errors = ruleErrors(params, next);
+		if (params.op === "goal" && next.kind === "empty") errors.push("GOAL requires a non-empty list; use INIT to create one");
+		if (errors.length === 0) phases = applyOp(phases, params, errors);
+		if (errors.length > 0) {
+			return result(session, previous, formatSummary(previous, errors, true), { op, operations: ops, isError: true });
+		}
+		if (params.op !== "goal") normalizeInProgress(phases);
+		const goal: GoalState =
+			params.goal !== undefined ? { kind: "set", goal: params.goal } : next.kind === "list" ? next.goal : { kind: "missing" };
+		next = stateOf(goal, phases);
+	}
 	const committed = commitTodoState(session, next);
 	if (committed.kind === "failed") {
 		const current = readTodoMore(session.sessionManager.getBranch());
-		return result(session, current, formatSummary(current, [committed.message], true), { op: params.op, isError: true });
+		return result(session, current, formatSummary(current, [committed.message], true), { op, operations: ops, isError: true });
 	}
-	return result(session, next, formatSummary(next, [], false), { op: params.op, completedTasks: completionTransitions(before, updated) });
+	return result(session, next, formatSummary(next, [], false), {
+		op,
+		operations: ops,
+		changes: batch.params,
+		completedTasks: completionTransitions(before, phases),
+	});
 }
-// @upstream-end

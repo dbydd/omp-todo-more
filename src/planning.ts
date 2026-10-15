@@ -11,7 +11,7 @@ import { errorText } from "./errors.ts";
 import { readTodoMore, type TodoMoreState, toSnapshot } from "./state.ts";
 
 const INIT_REMINDER =
-	"Todo is empty. Initialize it now with op init before proceeding: include goal {objective, measure, doneWhen} and every step of your current plan as {title, explanation}. edit is blocked until the list has items.";
+	'Todo is empty. Initialize it now with one Todo document before proceeding: INIT "objective" "measure" "doneWhen", PHASE "name", and ADD "title" "explanation" for every step of your current plan, between *** Begin Todo and *** End Todo. edit is blocked until the complete document succeeds and the list has items.';
 
 type HumanMessage = Extract<AgentMessage, { role: "user" | "custom" }>;
 

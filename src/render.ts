@@ -1,12 +1,14 @@
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { type ToolRenderResultOptions, z } from "@oh-my-pi/pi-coding-agent";
 import { type Component, replaceTabs, Text, type Theme, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
+import { previewTodo, type TodoCommand, type TodoPreview, type TodoTarget } from "./protocol.ts";
 import { goalLines, TODO_STATUSES, type TodoMoreSnapshot, type TodoStatus, todoMoreSnapshotSchema } from "./state.ts";
-import { OPS, type TodoMoreDetails } from "./tool.ts";
+import { OPS, RESULT_OPS, type TodoMoreDetails } from "./tool.ts";
 
 /** Result snapshots are display copies, not a second source of todo state. */
 export const detailsSchema = z.object({
-	op: z.enum(OPS).optional(),
+	op: z.enum(RESULT_OPS).optional(),
+	operations: z.array(z.enum(OPS)).optional(),
 	phases: z.array(
 		z.object({
 			name: z.string(),
@@ -21,33 +23,72 @@ export const detailsSchema = z.object({
 type Item = TodoMoreSnapshot["phases"][number]["items"][number];
 type Phase = TodoMoreSnapshot["phases"][number];
 
-// Streaming fields are parsed independently: a half-written item need not hide an already-known op.
-const callSchema = z.object({
-	op: z.unknown().optional(),
-	task: z.unknown().optional(),
-	phase: z.unknown().optional(),
-	items: z.unknown().optional(),
-	list: z.unknown().optional(),
-});
-const stringSchema = z.string();
-const callItemsSchema = z.array(z.object({ title: z.unknown().optional(), explanation: z.unknown().optional() }));
-const callListSchema = z.array(z.object({ phase: z.unknown().optional(), items: callItemsSchema }));
-type Call = { op?: string; task?: string; phase?: string; count: number };
+// Streaming arguments may not yet contain input; protocol parsing owns complete-line detection.
+const callSchema = z.object({ input: z.string().optional() });
+type Call = TodoPreview;
 export function parseCall(args: unknown): Call {
 	const parsed = callSchema.safeParse(args);
-	if (!parsed.success) return { count: 0 };
-	const { data } = parsed;
-	const op = stringSchema.safeParse(data.op);
-	const task = stringSchema.safeParse(data.task);
-	const phase = stringSchema.safeParse(data.phase);
-	const list = callListSchema.safeParse(data.list);
-	const items = callItemsSchema.safeParse(data.items);
-	return {
-		op: op.success ? op.data : undefined,
-		task: task.success ? task.data : undefined,
-		phase: phase.success ? phase.data : undefined,
-		count: list.success ? list.data.reduce((sum, entry) => sum + entry.items.length, 0) : items.success ? items.data.length : 0,
-	};
+	if (!parsed.success) return { commands: [], pending: "", complete: false, error: "Expected Todo input text" };
+	return previewTodo(parsed.data.input ?? "");
+}
+
+function previewTarget(target: TodoTarget): string {
+	switch (target.kind) {
+		case "task":
+			return `task: ${target.title}`;
+		case "phase":
+			return `phase: ${target.name}`;
+		case "all":
+			return "all todos";
+		default: {
+			const unreachable: never = target;
+			throw new Error(`Unexpected todo target: ${String(unreachable)}`);
+		}
+	}
+}
+
+function commandPreviewLines(command: TodoCommand): string[] {
+	switch (command.kind) {
+		case "init":
+		case "goal":
+			return [
+				`${command.kind.toUpperCase()} goal`,
+				`  Objective: ${command.goal.objective}`,
+				`  Measure: ${command.goal.measure}`,
+				`  Done when: ${command.goal.doneWhen}`,
+			];
+		case "phase":
+			return [`PHASE: ${command.name} (ADD context)`];
+		case "add":
+		case "explain":
+			return [`${command.kind.toUpperCase()} task: ${command.title}`, `  Explanation: ${command.explanation}`];
+		case "start":
+			return [`START task: ${command.title}`];
+		case "done":
+		case "drop":
+		case "rm":
+		case "unblock":
+			return [`${command.kind.toUpperCase()} ${previewTarget(command.target)}`];
+		case "block":
+			return [`BLOCK ${previewTarget(command.target)}`, ...(command.reason === undefined ? [] : [`  Reason: ${command.reason}`])];
+		case "view":
+			return ["VIEW current todos"];
+		default: {
+			const unreachable: never = command;
+			throw new Error(`Unexpected todo command: ${String(unreachable)}`);
+		}
+	}
+}
+
+/** Shared display-only intent for ANSI and native call views, never a projected snapshot. */
+export function callPreviewLines(call: Call): string[] {
+	const lines = ["Preview only — not committed."];
+	for (const command of call.commands) lines.push(...commandPreviewLines(command));
+	if (call.commands.length === 0) lines.push("Waiting for complete command lines.");
+	if (call.error) lines.push(`Invalid preview: ${call.error}`);
+	if (!call.complete && call.pending !== "") lines.push(`Pending line — unfinished, not executable: ${call.pending}`);
+	lines.push(call.complete ? "Document complete; awaiting execution." : "Generating — awaiting a complete Todo document.");
+	return lines.map(forDisplay);
 }
 
 // @upstream adapted @oh-my-pi/pi-utils@18.10.1 src/sanitize-text.ts#sanitizeText
@@ -145,15 +186,37 @@ function selectCollapsed(items: Item[]): { items: Item[]; summary: string } {
 // @upstream-end
 
 // @upstream adapted @oh-my-pi/pi-tui@18.10.1 src/tools/todo.ts#computeTouchedPhases
-function touchedPhases(call: Call, phases: Phase[], completed: NonNullable<TodoMoreDetails["completedTasks"]>): Set<string> | null {
+function touchedPhases(
+	call: Call,
+	phases: Phase[],
+	completed: NonNullable<TodoMoreDetails["completedTasks"]>,
+	op: TodoMoreDetails["op"],
+): Set<string> | null {
+	// A batch can touch unrelated targets; retain every final phase rather than hide one.
+	if (op === "batch" || op === "init") return new Set(phases.map((phase) => phase.name));
 	const touched = new Set<string>();
 	for (const phase of phases) if (phase.items.some((item) => item.status === "in_progress")) touched.add(phase.name);
 	for (const transition of completed) touched.add(transition.phase);
-	if (call.op === "init") for (const phase of phases) touched.add(phase.name);
-	if (call.phase && phases.some((phase) => phase.name === call.phase)) touched.add(call.phase);
-	if (call.task) {
-		const phase = phases.find((phase) => phase.items.some((item) => item.title === call.task));
-		if (phase) touched.add(phase.name);
+	let addPhase = "Tasks";
+	for (const command of call.commands) {
+		if (command.kind === "init") return new Set(phases.map((phase) => phase.name));
+		if (command.kind === "phase") addPhase = command.name;
+		if (command.kind === "add" && phases.some((phase) => phase.name === addPhase)) touched.add(addPhase);
+		if ("target" in command && command.target.kind === "all") return new Set(phases.map((phase) => phase.name));
+		if ("target" in command && command.target.kind === "phase") {
+			const name = command.target.name;
+			if (phases.some((phase) => phase.name === name)) touched.add(name);
+		}
+		const title =
+			command.kind === "start" || command.kind === "explain"
+				? command.title
+				: "target" in command && command.target.kind === "task"
+					? command.target.title
+					: undefined;
+		if (title !== undefined) {
+			const phase = phases.find((phase) => phase.items.some((item) => item.title === title));
+			if (phase) touched.add(phase.name);
+		}
 	}
 	return touched.size > 0 ? touched : null;
 }
@@ -243,11 +306,8 @@ function framedCard(theme: Theme, header: string, build: () => string[], error =
 // @upstream adapted @oh-my-pi/pi-tui@18.10.1 src/tools/todo.ts#todoToolRenderer.renderCall
 export function renderTodoCall(args: unknown, _options: ToolRenderResultOptions, theme: Theme): Component {
 	const call = parseCall(args);
-	const parts = [call.op ?? "update"];
-	if (call.task) parts.push(call.task);
-	if (call.phase) parts.push(call.phase);
-	if (call.count > 0) parts.push(`${call.count} item${call.count === 1 ? "" : "s"}`);
-	return new Text(statusLine(theme, theme.styledSymbol("status.pending", "muted"), parts.join(" ")), 0, 0);
+	const header = statusLine(theme, theme.styledSymbol("status.pending", "muted"), "preview — not committed");
+	return framedCard(theme, header, () => callPreviewLines(call).map((line) => theme.fg("dim", line)));
 }
 // @upstream-end
 
@@ -275,7 +335,7 @@ export function renderTodoResult(
 	const header = statusLine(theme, theme.styledSymbol("tool.todo", "accent"), `${closed}/${total}`);
 	if (total === 0) return new Text(`${header}\n  ${theme.fg("dim", "No todos")}`, 0, 0);
 	const call = parseCall(args);
-	const touched = touchedPhases({ ...call, op: call.op ?? details.op }, phases, completed);
+	const touched = touchedPhases(call, phases, completed, details.op);
 	return framedCard(theme, header, () => {
 		const lines: string[] = [];
 		const { expanded, spinnerFrame } = options;
@@ -304,7 +364,7 @@ export function renderTodoResult(
 				for (let line = 0; line < rendered.length; line++)
 					lines.push(`  ${line === 0 ? `${branch} ` : theme.fg("dim", continued)}${rendered[line] ?? ""}`);
 				if (expanded && !isClosed(item)) {
-					const explanation = forDisplay(item.explanation ?? "(no explanation yet: add one with op explain)");
+					const explanation = forDisplay(item.explanation ?? "(no explanation yet: add one with EXPLAIN)");
 					for (const line of explanation.split("\n")) lines.push(`  ${theme.fg("dim", continued)}  ${theme.fg("dim", line)}`);
 				}
 			}

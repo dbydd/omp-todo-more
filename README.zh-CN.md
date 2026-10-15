@@ -23,9 +23,53 @@ todo:
 
 ## 工具与状态
 
-`todo` 操作保持为 `init/start/done/rm/drop/block/unblock/append/view/explain`。任务身份是完整 title；goal 为 `{objective, measure, doneWhen}`，新增任务为 `{title, explanation}`。空列表不携带 goal。已有列表缺 goal 时，下一次 mutation 必须提供 goal。
+模型每次调用发送一份 Todo 文档。支持 OMP custom-tool wire 的 provider 使用与内置 `edit` 相同的 Lark grammar 接口；其他 provider 发送 `{input: "<同一份文档>"}`。工具只接受这一个文档输入。
 
-当前会话分支是唯一权威。改变状态的成功 mutation 追加完整 `mouriya.omp.todo-more` snapshot，并更新宿主 TodoTracker 投影。结果保留 `todoMore: true`、`details.more`、原生兼容 phases、storage 和完成 transitions。
+一次初始化全部阶段和任务：
+
+```text
+*** Begin Todo
+INIT "交付流式 Todo" "真实用户路径通过" "实现与运行验证完成"
+PHASE "实现"
+ADD "实现文档解析" "接受完整文档并保留任务标题的精确身份"
+ADD "显示流式预览" "显示生成中的命令，但不改变已保存状态"
+PHASE "验证"
+ADD "验证已安装工具" "检查注册工具与持久化结果"
+*** End Todo
+```
+
+后续一次调用合并相关编辑，不按任务或字段拆调用：
+
+```text
+*** Begin Todo
+DONE "实现文档解析"
+START "显示流式预览"
+EXPLAIN "显示流式预览" "检查 ANSI 与 native 两个预览入口"
+PHASE "验证"
+ADD "检查任务历史" "确认接受的批次保留完整操作记录"
+*** End Todo
+```
+
+命令使用大写，每条命令占一个物理行。字符串按 JSON 规则加引号；`\"`、`\\`、`\n` 分别保留引号、反斜杠和多行正文，不 trim 完整 title。
+
+| 命令 | 语义 |
+| --- | --- |
+| `INIT "objective" "measure" "doneWhen"` | 替换列表与 goal；只能作为第一条命令且至多一次。紧随的 `PHASE`/`ADD` 合成一次初始化。 |
+| `PHASE "name"` 后跟 `ADD "title" "explanation"` | 向该阶段增加一个或多个任务，阶段不存在时创建。初始化之外，每个追加块都必须有自己的 `PHASE`。 |
+| `GOAL "objective" "measure" "doneWhen"` | 在非空列表完整替换三个 goal 字段，不改变任务状态。 |
+| `START "title"` | 选择当前执行的任务。 |
+| `EXPLAIN "title" "explanation"` | 替换目标任务的解释。 |
+| `DONE target`、`DROP target`、`RM target` | 完成、放弃或删除带引号的任务、`PHASE "name"` 或 `ALL`。 |
+| `BLOCK target ["reason"]`、`UNBLOCK target` | 阻塞或解除阻塞带引号的任务或 `PHASE "name"`；二者均不接受 `ALL`。 |
+| `VIEW` | 只读列表，必须是文档中唯一的命令。 |
+
+`PHASE` 只作用于紧随的 `ADD`，不限定后续状态命令；每个阶段块至少有一个 `ADD`。`INIT` 后第一个 `ADD` 没有 `PHASE` 时使用 `"Tasks"`。任务 title 与初始化中的 phase 名必须唯一。空 selector 会被拒绝；`"ALL"` 是任务标题，裸 `ALL` 才选择整个列表。
+
+参数生成期间，ANSI 与 native 工具卡片实时显示 goal、命令、explanation 和未完成行，并明确标记为**未提交预览**。部分输入、取消生成或未完成文档都不改变 Todo。执行读取当前分支，验证完整文档并在 working copy 上按顺序应用逻辑操作；任何一条命令无效，整批拒绝。成功且改变状态的批次只追加一条 `mouriya.omp.todo-more` snapshot，并更新一次宿主 TodoTracker 投影。任务操作逐条 normalize，不只在批次末尾 normalize；`GOAL` 与 `VIEW` 不 normalize 状态。
+
+空列表不携带 goal。导入列表缺 goal 时，必须先写 `GOAL` 再写其他 mutation。`RM ALL` 或删除最后一项后，working copy 立即丢弃 goal，后续追加不能继承它；创建下一份列表应使用 `INIT`。
+
+当前会话分支是唯一权威。结果保留 `todoMore: true`、`details.more`、原生兼容 phases、storage 和完成 transitions。`details.op` 为逻辑操作名或 `"batch"`，`details.operations` 按顺序列出操作名。成功 mutation 还返回 `details.changes`，承载实际应用的有序结构化操作，供历史记录消费者使用：同一阶段的新增项是一条 `append` change，初始化全部阶段是一条 `init` change。失败与 `VIEW` 不产生 accepted changes。
 
 reader 按标题联结宿主 `user_todo_edit` 与旧原生工具结果：已知标题保留 explanation，新标题缺 explanation；原生空 snapshot 中断此前 goal/explanation 的继承。自有 marked 工具结果不重复作为状态记录读取。现有 reader 忽略格式无效的记录；本次迁移不更改这项兼容语义。
 
@@ -53,11 +97,11 @@ type TodoMoreReadResponse =
 
 只返回 pending/in_progress 项；missing goal/explanation 为 null。无会话或读取异常是 unavailable，不是空 Todo。通道不写状态、不提供 watch，不安装 Tern、不导出内部 reader。监听器在实例 session_shutdown 取消，子会话使用自己的 bus。
 
-completion judge 应在构造模型 prompt 前请求一次，并在模型返回后、检查 openItems 前再次请求；不可用时沿用 warning + fail-open。ctx 日志仅从成功工具结果的 input.goal 记录历史 goal-set，不是当前 Todo 的权威。
+completion judge 应在构造模型 prompt 前请求一次，并在模型返回后、检查 openItems 前再次请求；不可用时沿用 warning + fail-open。ctx task-log 消费者从成功的 `details.changes` 记录每条已接受逻辑操作及其显式 goal 替换；日志是历史记录，不是当前 Todo 状态。
 
 ## 编辑与提交
 
-GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，不增加模型工具操作。保存重新读取对应 session 的当前分支：只覆盖目标字段，任务的最新 phase/status/blocker/order 与其他字段全部保留。空列表拒绝编辑，missing goal 必须先设置；删除或改名的任务不因旧草稿恢复。
+GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，编辑本身不生成模型工具调用。保存重新读取对应 session 的当前分支：只覆盖目标字段，任务的最新 phase/status/blocker/order 与其他字段全部保留。空列表拒绝编辑，missing goal 必须先设置；删除或改名的任务不因旧草稿恢复。
 
 工具 mutation 与 GUI 保存共同调用 `commitTodoState`。同步追加后重读同一分支确认接受，再更新宿主投影。失败区分 branch acceptance 与 projection：后者不回滚已接受记录，工具返回 error 与最新权威 details，GUI 保留草稿和错误。相同值不追加 snapshot；重投影允许修复此前的部分 projection failure。`view` 保持纯读。
 

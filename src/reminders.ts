@@ -340,7 +340,7 @@ function goalBlock(state: ListState): string[] {
 		case "set":
 			return ["Goal:", ...goalLines(state.goal.goal).map((line) => `  ${line}`)];
 		case "missing":
-			return ["Goal: none yet — pass goal with the next todo mutation."];
+			return ["Goal: none yet — put GOAL first in the next Todo document."];
 		default: {
 			const unreachable: never = state.goal;
 			throw new Error(`Unexpected goal state: ${String(unreachable)}`);
@@ -353,7 +353,7 @@ function unexplainedLines(state: ListState): string[] {
 	const unexplained = unexplainedItems(state);
 	if (unexplained.length === 0) return [];
 	return [
-		`Items without an explanation (${unexplained.length}); add one with op explain: ${unexplained.map((item) => `"${item.title}"`).join(", ")}`,
+		`Items without an explanation (${unexplained.length}); batch EXPLAIN commands in one Todo document: ${unexplained.map((item) => JSON.stringify(item.title)).join(", ")}`,
 	];
 }
 
@@ -479,15 +479,15 @@ function eagerTodoText(todo: string, forced: boolean): string {
 		? `Before substantive work, create a phased todo.
 
 You MUST call \`${todo}\` first in this turn.
-You MUST initialize the todo list with a single \`init\` op that carries the \`goal\` {objective, measure, doneWhen}: what this work is, how its result is measured, how far it must go to count as done.
+You MUST initialize the todo list in one complete Todo document. Start with INIT "objective" "measure" "doneWhen": what this work is, how its result is measured, how far it must go to count as done.
 You MUST cover the entire request from investigation through implementation and verification — not just the next immediate step.
-Each item is {title, explanation}: the title MUST be a concise, specific 5-10 word label; the explanation says what the item covers and what shows it is finished.
-The \`init\` op only accepts the goal, phase names and {title, explanation} items; do not invent other fields.
+Use PHASE "name" and ADD "title" "explanation" lines; each title MUST be a concise, specific 5-10 word label and each explanation says what the item covers and what shows it is finished.
+Wrap all commands in *** Begin Todo and *** End Todo, quote strings using JSON escapes, and do not invent other fields or call separately for individual items. Partial input is not saved.
 
 After \`${todo}\` succeeds, continue the request in the same turn.
 NEVER call \`${todo}\` again unless task state has materially changed.`
-		: `Consider calling \`${todo}\` first to lay out a phased plan with a single \`init\` op. A good list covers the whole request — investigation through implementation and verification — not just the next step, with specific items a future turn could execute without re-planning.
-The \`init\` op carries the \`goal\` {objective, measure, doneWhen} and items of {title, explanation}: a concise, specific 5-10 word title, and an explanation of what the item covers and what shows it is finished; don't invent other fields.
+		: `Consider calling \`${todo}\` first to lay out a phased plan in one complete Todo document. A good list covers the whole request — investigation through implementation and verification — not just the next step.
+Use INIT "objective" "measure" "doneWhen", PHASE "name", and ADD "title" "explanation" between *** Begin Todo and *** End Todo. Use JSON-quoted strings, concise specific titles and explanations of what each item covers and what shows it is finished. Batch all items in this single call.
 If you create the list, continue the request in the same turn and avoid re-calling \`${todo}\` unless task state materially changes.`;
 	return `<system-reminder>\n${body}\n</system-reminder>\n`;
 }
@@ -573,7 +573,7 @@ function midRunNudgeText(todo: string, incompleteCount: number, state: ListState
 	const goal =
 		state.goal.kind === "set"
 			? `Goal objective: ${state.goal.goal.objective}`
-			: `The list has no goal yet: pass goal with the next \`${todo}\` mutation.`;
+			: `The list has no goal yet: put GOAL first in the next \`${todo}\` document.`;
 	return `<system-reminder>
 ${incompleteCount} todo item${incompleteCount !== 1 ? "s" : ""} still open. If you finished a task since last \`${todo}\` update, mark it done now so progress stays visible; otherwise keep working.
 ${goal}
@@ -623,7 +623,7 @@ function goalTodoContext(session: AgentSession, state: TodoMoreState): string | 
 	const goal =
 		state.goal.kind === "set"
 			? goalLines(state.goal.goal).map((line) => sanitizeGoalTodoText(line))
-			: [`Goal: none yet — pass goal with the next \`${todoToolRef(session)}\` mutation.`];
+			: [`Goal: none yet — put GOAL first in the next \`${todoToolRef(session)}\` document.`];
 
 	// @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/prompts/goals/goal-todo-context.md#*
 	return `<todo_context>

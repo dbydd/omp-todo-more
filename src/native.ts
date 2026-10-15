@@ -1,8 +1,9 @@
 import type { ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { type NativeChild, type NativeNode, node, span, stableKey } from "@oh-my-pi/pi-tui";
-import { detailsSchema, parseCall } from "./render.ts";
+import type { parametersSchema } from "./protocol.ts";
+import { callPreviewLines, detailsSchema, parseCall } from "./render.ts";
 import type { TodoMoreSnapshot, TodoStatus } from "./state.ts";
-import type { parametersSchema, TodoMoreDetails } from "./tool.ts";
+import type { TodoMoreDetails } from "./tool.ts";
 
 function checklistStatus(status: TodoStatus): "pending" | "active" | "done" | "dropped" | "blocked" {
 	switch (status) {
@@ -154,9 +155,18 @@ export const describeTodoCall: NonNullable<ToolDefinition<typeof parametersSchem
 	return {
 		tool: {
 			title: "Todo More",
-			target: [call.op ?? "update", call.task ?? call.phase].filter(Boolean).join(" "),
-			meta: call.count > 0 ? [`${call.count} items`] : undefined,
+			target: "preview — not committed",
+			meta: [`${call.commands.length} complete command${call.commands.length === 1 ? "" : "s"}`],
 		},
+		open: true,
+		preview: "children",
+		body: [
+			node(
+				"col",
+				{ role: "todo-more.preview", gap: "sm" },
+				callPreviewLines(call).map((text, index) => node("text", { text, wrap: "word" }, undefined, `line-${index}`)),
+			),
+		],
 	};
 };
 

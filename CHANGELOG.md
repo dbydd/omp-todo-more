@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added edit-style freeform Todo documents with one-call initialization and ordered batch edits, using the same `{input}` text on function-tool providers.
+- Added live ANSI/native intent previews without partial persistence, whole-batch validation and one final snapshot commit, plus accepted-change records for task-history consumers.
+
 - Replaced Tern's native bottom Todo display with a compact Todo More progress card and a full, upward-opening popover, without modifying OMP or discarding its Todo projection.
 - Unified native tool results, progress details and reminder snapshots around goal fields and the native checklist, preserving explanations alongside blockers and keeping real task counts.
 - Routed Tern's `/todo` and `/todo edit` to the rich editor and `/todo expand` / `/todo collapse` to the replacement card, while retaining task-management subcommands and the ANSI HUD.

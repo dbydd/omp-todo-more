@@ -33,16 +33,81 @@ host imports.
 
 ## Tool and state
 
-The `todo` operations stay `init/start/done/rm/drop/block/unblock/append/view/explain`.
-A task's identity is its complete title; the goal is
-`{objective, measure, doneWhen}` and a new task is `{title, explanation}`. An
-empty list carries no goal. When an existing list lacks a goal, the next
-mutation must supply one.
+The model sends one Todo document per call. On providers supporting OMP's
+custom-tool wire, `todo` exposes a Lark grammar just like the built-in `edit`;
+other providers send `{input: "<the same document>"}`. The tool accepts only
+this document input.
 
-The current session branch is the only authority. Every successful mutation
-that changes state appends a complete `mouriya.omp.todo-more` snapshot and
-updates the host TodoTracker projection. The result keeps `todoMore: true`,
-`details.more`, native-compatible phases, storage and completion transitions.
+Initialize all phases and tasks together:
+
+```text
+*** Begin Todo
+INIT "Deliver streaming todos" "The real user path passes" "Implementation and runtime verification are complete"
+PHASE "Implementation"
+ADD "Implement the parser" "Accept complete documents and preserve exact task titles"
+ADD "Render the preview" "Display generated commands without changing saved state"
+PHASE "Verification"
+ADD "Exercise the installed tool" "Check the registered tool and the persisted result"
+*** End Todo
+```
+
+Combine related edits in one subsequent call rather than calling for each
+task or field:
+
+```text
+*** Begin Todo
+DONE "Implement the parser"
+START "Render the preview"
+EXPLAIN "Render the preview" "Check both the ANSI and native preview surfaces"
+PHASE "Verification"
+ADD "Inspect task history" "Confirm that the accepted batch retains its operation history"
+*** End Todo
+```
+
+Commands are uppercase and occupy one physical line. String arguments use
+JSON quoting; `\"`, `\\` and `\n` preserve quotes, backslashes and multiline
+text without trimming the complete title.
+
+| Command | Meaning |
+| --- | --- |
+| `INIT "objective" "measure" "doneWhen"` | Replace the list and goal; first command only, at most once. Following `PHASE`/`ADD` lines form one initialization. |
+| `PHASE "name"` followed by `ADD "title" "explanation"` | Add one or more tasks to that phase, creating it if needed. Outside initialization, every append block requires its own `PHASE`. |
+| `GOAL "objective" "measure" "doneWhen"` | Replace all goal fields on an existing nonempty list, without changing task statuses. |
+| `START "title"` | Select the task to work on. |
+| `EXPLAIN "title" "explanation"` | Replace that task's explanation. |
+| `DONE target`, `DROP target`, `RM target` | Complete, abandon or remove the quoted task, `PHASE "name"`, or `ALL`. |
+| `BLOCK target ["reason"]`, `UNBLOCK target` | Block or unblock the quoted task or `PHASE "name"`; neither accepts `ALL`. |
+| `VIEW` | Read the list; it must be the document's sole command. |
+
+`PHASE` scopes only its immediately following `ADD` lines, never subsequent
+status selectors. Every phase block needs at least one `ADD`. An `INIT`
+whose first `ADD` has no `PHASE` uses `"Tasks"`. Titles and initialization
+phase names must be unique. Empty selectors are rejected; `"ALL"` names a
+task, whereas bare `ALL` selects the whole list.
+
+As arguments stream, ANSI and native tool cards show the generated goal,
+commands, explanations and unfinished line as **preview only**. Partial
+input, canceled generation and an incomplete document never change Todo
+state. Execution reads the current branch, validates the complete document
+and applies logical operations in order to a working copy. One invalid
+command rejects the entire batch; a successful changing batch appends one
+`mouriya.omp.todo-more` snapshot and updates the host TodoTracker projection
+once. Normalization happens after each logical task operation, not only at
+the end. `GOAL` and `VIEW` do not normalize task status.
+
+An empty list carries no goal. When an imported list lacks a goal, put
+`GOAL` before other mutations. `RM ALL` or removing the last task drops the
+goal immediately within the working copy; later additions cannot inherit it.
+Use `INIT` to create the next list.
+
+The current session branch is the only authority. Results retain
+`todoMore: true`, `details.more`, native-compatible phases, storage and
+completion transitions. `details.op` identifies the logical operation or
+`"batch"`; `details.operations` lists operation names in order. Successful
+mutations also return `details.changes`, the ordered structured operations
+actually applied, for history consumers. A phase's additions form one
+`append` change; all initialization phases form one `init` change.
+Rejected calls and `VIEW` do not emit accepted changes.
 
 The reader joins the host's `user_todo_edit` entries and old native tool
 results by title: known titles keep their explanation, new titles lack one. A
@@ -92,14 +157,14 @@ exports no internal reader. The listener is removed on the instance's
 
 A completion judge should request once before building the model prompt and
 again after the model returns, before checking `openItems`; when unavailable
-it keeps its warning + fail-open behavior. The ctx log records historical
-goal-sets only from `input.goal` of successful tool results and is not the
-authority for the current Todo.
+it keeps its warning + fail-open behavior. The ctx task-log consumer reads
+successful `details.changes` to record each accepted logical operation and
+its explicit goal replacement. The log is historical, not the current Todo.
 
 ## Editing and commits
 
 The GUI has only two edit intents, `set_goal` and `explain` by complete title;
-it adds no model tool operation. Saving re-reads the target session's current
+it does not generate model tool calls. Saving re-reads the target session's current
 branch and overwrites only the target field; the task's latest
 phase/status/blocker/order and every other field are kept. An empty list
 rejects edits, a missing goal must be set first, and a deleted or renamed task
