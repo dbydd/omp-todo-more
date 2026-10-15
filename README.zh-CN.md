@@ -46,9 +46,11 @@ reader 按标题联结宿主 `user_todo_edit` 与旧原生工具结果：已知�
 
 只要持久状态仍为 `in_progress`，会话 idle 或进程停止期间也继续累计墙钟时间；这不是 CPU 时间统计。原生状态变化使用对应 session entry 的 timestamp 结算。
 
-插件每秒及在模型/工具边界读取当前分支，覆盖没有 extension change subscription 的原生 `/todo` 编辑。每个超时 active 预算在正常投递路径收到一次系统警告。修订后的新预算也有一次警告机会；如果保留的累计时间已经超过新预算，会再次告警。排队消息只是投递意图；实际 `mouriya.omp.todo-more.overtime` custom-message entry 才是通知事实，普通 compaction 保留分支 journal 中的这些记录。警告不复制进 item snapshot，重新加载时读取分支而不信任旧 timer。
+插件只保留距离最近的 active 预算 deadline 的一个单次 timeout；todo 相关 journal 写入或 session/branch 变化时重新调度，不进行周期轮询，也不在 end hook 检查 deadline。原生 `/todo`、延后持久化的 native 工具结果以及已接受的 rich commit 都在 journal 写入方法上被观察，即使宿主投影失败也不会漏掉变更。普通消息不触发分支读取，collaboration 所有的 append callback 保持不变。到点 callback 重新读取当前分支后请求注入；超长等待仅按平台 timeout 上限分段。
 
-运行中的警告通过 aside 在安全 step boundary 送达，不取消工具批次。idle 时警告立即追加到 transcript 和 context，但不启动模型 turn，因此不会撤销人工停止。shutdown 取消 observer；重新打开已超时的 active 项时重新检查。
+每个超时 active 预算在正常投递路径收到一次系统警告。修订后的新预算也有一次警告机会；如果保留的累计时间已经超过新预算，会再次告警。排队消息只是投递意图；实际 `mouriya.omp.todo-more.overtime` custom-message entry 才是通知事实，普通 compaction 保留分支 journal 中的这些记录。警告不复制进 item snapshot，重新加载时按分支重建 timeout。
+
+到点时，运行中的会话立即收到 aside 注入请求；宿主在下一个安全 step boundary 将警告提供给模型，不取消工具批次。检测和排队不等待 step 结束。idle 时警告立即追加到 transcript 和 context，但不启动模型 turn，因此不会撤销人工停止。shutdown 取消 timeout 并恢复被观察的 journal 方法；重新打开已超时的 active 项时重新检查。
 
 警告指出任务、预计时间与已耗时间，并要求 agent 保持预期结果、验收标准和质量，核实超时原因、判断是否改变方针、继续推进完整任务。警告推荐与 subagent 讨论原因和方针；子会话可与 parent 沟通。插件不自动创建 agent、不改变任务 status、不降低 goal。估计是预测而非硬 deadline，agent 不得仅为掩盖超时而重建列表或抬高预算。
 

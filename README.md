@@ -83,20 +83,29 @@ An item that remains `in_progress` continues to accrue wall time while its
 session is idle or the process is stopped; this is not CPU-time accounting.
 Native status changes use the corresponding session entry's timestamp.
 
-The plugin reads the current branch every second and at model/tool boundaries,
-including edits made by native `/todo`, which has no extension change
-subscription. Each overdue active budget receives one system warning in the
-normal delivery path. A changed estimate gets its own warning if its preserved
-elapsed time exceeds the new budget. A queued message is only a delivery
-intent; an actual `mouriya.omp.todo-more.overtime` custom-message entry is the
-notification fact. Compaction retains those facts in the branch journal.
-Warnings are not copied into item snapshots, and reloading reads the current
-branch rather than trusting a timer.
+The plugin maintains one one-shot timeout for the nearest active budget's
+deadline. Todo-related journal appends and session/branch changes re-arm it;
+there is no periodic polling and no end-hook deadline check. Native `/todo`,
+delayed native tool results and accepted rich commits are observed at their
+journal write methods, even when the host projection fails. Ordinary messages
+do not trigger branch reads, and the collaboration append callback is untouched.
+At the deadline the callback re-reads the current branch before requesting
+injection. Large delays are split only at the platform timeout limit.
 
-During a run, a warning is delivered as an aside at a safe step boundary
-without cancelling the tool batch. When idle, it is appended to the transcript
-and context without starting a model turn, so it does not undo a human stop.
-Shutdown cancels the observer; reopening an overdue active item checks it again.
+Each overdue active budget receives one system warning in the normal delivery
+path. A changed estimate gets its own warning if its preserved elapsed time
+exceeds the new budget. A queued message is only a delivery intent; an actual
+`mouriya.omp.todo-more.overtime` custom-message entry is the notification fact.
+Compaction retains those facts in the branch journal. Warnings are not copied
+into item snapshots, and reloading reconstructs the timeout from the branch.
+
+At the deadline, a running session receives an aside injection request; the
+host makes it available to the model at the next safe step boundary without
+cancelling the tool batch. Detection and enqueueing do not wait for the step
+to end. When idle, the warning is appended to the transcript and context without
+starting a model turn, so it does not undo a human stop. Shutdown cancels the
+timeout and restores the observed journal methods; reopening an overdue
+active item checks it again.
 
 The warning identifies the item, estimate and elapsed time, and tells the agent
 to preserve the expected outcome, acceptance criteria and quality; verify the
