@@ -4,6 +4,7 @@ import { USER_TODO_EDIT_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/tools/todo
 import { hasOvertimeWarning, OVERTIME_TYPE } from "../src/overtime.ts";
 import {
 	elapsedTime,
+	estimatedMinutesSchema,
 	type ItemTime,
 	readTodoMore,
 	stateOf,
@@ -21,7 +22,7 @@ const goal = { objective: "Ship timing", measure: "Active time survives replay",
 const budget: Extract<ItemTime, { kind: "estimated" }> = {
 	kind: "estimated",
 	budgetId: "runtime-budget",
-	minutes: 1.5,
+	minutes: 1,
 	elapsedMs: 1_250,
 	runningSince: null,
 };
@@ -61,7 +62,7 @@ function warningEntry(budgetId: string): Extract<SessionEntry, { type: "custom_m
 		customType: OVERTIME_TYPE,
 		content: "This budget has exceeded its estimate.",
 		display: true,
-		details: { budgetId, title, estimatedMinutes: 1.5, elapsedMs: 100_000 },
+		details: { budgetId, title, estimatedMinutes: 1, elapsedMs: 100_000 },
 	};
 }
 
@@ -86,6 +87,36 @@ function requireEstimate(time: ItemTime): Extract<ItemTime, { kind: "estimated" 
 	return time;
 }
 
+describe("estimatedMinutesSchema", () => {
+	const maximumMinutes = Math.floor(Number.MAX_SAFE_INTEGER / 60_000);
+
+	for (const minutes of [1, 2, maximumMinutes]) {
+		test(`accepts positive integer ${minutes} without changing its value`, () => {
+			const parsed = estimatedMinutesSchema.safeParse(minutes);
+			expect(parsed.success).toBe(true);
+			if (!parsed.success) throw new Error("Expected a valid integer minute estimate");
+			expect(parsed.data).toBe(minutes);
+		});
+	}
+
+	for (const minutes of [
+		0.01,
+		0.5,
+		1.5,
+		0,
+		-1,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		Number.NEGATIVE_INFINITY,
+		maximumMinutes + 1,
+		Number.MAX_SAFE_INTEGER / 60_000,
+	]) {
+		test(`rejects invalid minute estimate ${minutes}`, () => {
+			expect(estimatedMinutesSchema.safeParse(minutes).success).toBe(false);
+		});
+	}
+});
+
 describe("active wall-time transitions", () => {
 	for (const pausedStatus of ["blocked", "pending"] as const) {
 		test(`${pausedStatus} pauses accumulated time until the item resumes`, () => {
@@ -101,7 +132,7 @@ describe("active wall-time transitions", () => {
 			expect(resumed).toEqual({ ...budget, elapsedMs: 7_250, runningSince: epoch + 30_000 });
 			expect(elapsedTime(requireEstimate(resumed), epoch + 35_000)).toBe(12_250);
 			expect(transitionTime(resumed, "completed", epoch + 35_000)).toEqual({ ...budget, elapsedMs: 12_250 });
-			expect(budget).toEqual({ kind: "estimated", budgetId: "runtime-budget", minutes: 1.5, elapsedMs: 1_250, runningSince: null });
+			expect(budget).toEqual({ kind: "estimated", budgetId: "runtime-budget", minutes: 1, elapsedMs: 1_250, runningSince: null });
 		});
 	}
 
@@ -248,7 +279,7 @@ describe("overtime warning facts", () => {
 		expect(hasOvertimeWarning(branch, `${budget.budgetId}-other`)).toBe(false);
 		expect(
 			hasOvertimeWarning(
-				[{ ...warning, details: { budgetId: budget.budgetId, title: "Previous title", estimatedMinutes: 1.5, elapsedMs: 100_000 } }],
+				[{ ...warning, details: { budgetId: budget.budgetId, title: "Previous title", estimatedMinutes: 1, elapsedMs: 100_000 } }],
 				budget.budgetId,
 			),
 		).toBe(true);
@@ -259,8 +290,8 @@ describe("overtime warning facts", () => {
 		const nonFacts: readonly SessionEntry[] = [
 			customEntry("intent", epoch, OVERTIME_TYPE, warning.details),
 			{ ...warning, id: "other-type", customType: `${OVERTIME_TYPE}.intent` },
-			{ ...warning, id: "incomplete", details: { budgetId: budget.budgetId, title, estimatedMinutes: 1.5 } },
-			{ ...warning, id: "invalid", details: { budgetId: budget.budgetId, title, estimatedMinutes: "1.5", elapsedMs: 100_000 } },
+			{ ...warning, id: "incomplete", details: { budgetId: budget.budgetId, title, estimatedMinutes: 1 } },
+			{ ...warning, id: "invalid", details: { budgetId: budget.budgetId, title, estimatedMinutes: "1", elapsedMs: 100_000 } },
 		];
 		expect(hasOvertimeWarning(nonFacts, budget.budgetId)).toBe(false);
 		expect(hasOvertimeWarning([...nonFacts, warning], budget.budgetId)).toBe(true);

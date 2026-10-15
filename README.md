@@ -39,9 +39,9 @@ A task's identity is its complete title; the goal is
 `{objective, measure, doneWhen}` and a new task is
 `{title, explanation, estimatedMinutes}`. The model must estimate every item
 it creates through `init` or `append`; there is no default estimate.
-`estimatedMinutes` is positive and finite, permits fractions, and is at most
-`Number.MAX_SAFE_INTEGER / 60_000` so conversion to milliseconds stays safe.
-Missing or invalid estimates reject the whole call.
+`estimatedMinutes` is a positive integer; fractions are rejected rather than
+rounded. Its maximum is `Math.floor(Number.MAX_SAFE_INTEGER / 60_000)` so
+conversion to milliseconds stays safe. Missing or invalid estimates reject the whole call.
 An empty list carries no goal. When an existing list lacks a goal, the next
 mutation must supply one.
 

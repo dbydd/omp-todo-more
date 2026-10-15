@@ -17,7 +17,7 @@ function currentPhases(): readonly TodoPhase[] {
 					title: "Edit goal",
 					explanation: { kind: "explained", text: "Replace the objective" },
 					status: "in_progress",
-					time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 2.5, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
+					time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 3, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
 				},
 				{
 					title: "Verify resume",
@@ -93,7 +93,7 @@ describe("applyTodoEdit", () => {
 			title: "Verify resume",
 			explanation: { kind: "explained", text: "Earlier draft" },
 			status: "in_progress",
-			time: { kind: "estimated", budgetId: "running-resume-budget", minutes: 1.5, elapsedMs: 20_000, runningSince: 1_800_000_060_000 },
+			time: { kind: "estimated", budgetId: "running-resume-budget", minutes: 2, elapsedMs: 20_000, runningSince: 1_800_000_060_000 },
 		},
 	];
 
@@ -194,7 +194,7 @@ describe("applyTodoEdit", () => {
 							title: "Edit goal",
 							explanation: "Replace the objective",
 							status: "in_progress",
-							time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 2.5, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
+							time: { kind: "estimated", budgetId: "edit-goal-budget", minutes: 3, elapsedMs: 12_000, runningSince: 1_800_000_000_000 },
 						},
 					],
 				},

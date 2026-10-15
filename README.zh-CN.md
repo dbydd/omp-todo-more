@@ -23,7 +23,7 @@ todo:
 
 ## 工具与状态
 
-`todo` 操作包括 `init/start/done/rm/drop/block/unblock/append/view/explain/estimate`。任务身份是完整 title；goal 为 `{objective, measure, doneWhen}`，新增任务为 `{title, explanation, estimatedMinutes}`。模型必须对 `init` 或 `append` 创建的每一项自行估时，系统不提供默认估计。`estimatedMinutes` 必须为正且有限，允许小数，最大为 `Number.MAX_SAFE_INTEGER / 60_000`，确保转换为毫秒后安全；缺失或非法估计会拒绝整次调用。空列表不携带 goal。已有列表缺 goal 时，下一次 mutation 必须提供 goal。
+`todo` 操作包括 `init/start/done/rm/drop/block/unblock/append/view/explain/estimate`。任务身份是完整 title；goal 为 `{objective, measure, doneWhen}`，新增任务为 `{title, explanation, estimatedMinutes}`。模型必须对 `init` 或 `append` 创建的每一项自行估时，系统不提供默认估计。`estimatedMinutes` 必须为正整数，不允许小数，也不会自动取整；最大为 `Math.floor(Number.MAX_SAFE_INTEGER / 60_000)`，确保转换为毫秒后安全。缺失或非法估计会拒绝整次调用。空列表不携带 goal。已有列表缺 goal 时，下一次 mutation 必须提供 goal。
 
 当前会话分支是唯一权威。改变状态的成功 mutation 追加完整 `mouriya.omp.todo-more` snapshot，并更新宿主 TodoTracker 投影。结果保留 `todoMore: true`、`details.more`、原生兼容 phases、storage 和完成 transitions。
 

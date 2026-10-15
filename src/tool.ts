@@ -27,7 +27,7 @@ import {
 
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/prompts/tools/todo.md#*
 export const DESCRIPTION = `Tasks identified by verbatim title, NEVER generated IDs (task-1). Unique, stable titles/phase names; lost text: view, NEVER guess.
-Every item is {title, explanation, estimatedMinutes}: title is the short name later ops target as \`task\`; explanation says what the item covers and what shows it is finished; estimatedMinutes is your positive, finite wall-time estimate in minutes (fractions allowed). Estimate every item yourself; do not invent a default. An item added outside this tool needs an explanation via \`explain\` {task, explanation} and a time estimate via \`estimate\` {task, estimatedMinutes}. Both operations also revise existing values.
+Every item is {title, explanation, estimatedMinutes}: title is the short name later ops target as \`task\`; explanation says what the item covers and what shows it is finished; estimatedMinutes is your positive integer wall-time estimate in minutes (no fractions). Estimate every item yourself; do not invent a default. An item added outside this tool needs an explanation via \`explain\` {task, explanation} and a time estimate via \`estimate\` {task, estimatedMinutes}. Both operations also revise existing values.
 \`goal\` is {objective, measure, doneWhen}: what this work is, how its result is measured, how far it must go to count as done. REQUIRED on init and whenever the list has none; any later mutation may carry a new goal that replaces it; NEVER on view. An emptied list drops its goal.
 Before touching anything, init for any multi-step work, requested task sets, or new instructions; every change is logged per context and read back through \`ctx\`. The list tracks the current scope, not the first plan: the moment the work changes — new or revised instructions, a changed plan, findings that add or remove steps — update it (append, rm/drop, or re-init). MUST list EVERY user item separately (phased/numbered/bulleted/N); NEVER omit or remember leftovers.
 After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Blocked NEVER starts automatically; unblock returns pending. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
@@ -50,7 +50,7 @@ const goalParam = z
 const itemParam = z.object({
 	title: z.string().describe("short stable name; the `task` value of later ops"),
 	explanation: z.string().describe("what the item covers and what shows it is finished"),
-	estimatedMinutes: estimatedMinutesSchema.describe("your estimated in_progress wall time in minutes; positive, finite, fractions allowed"),
+	estimatedMinutes: estimatedMinutesSchema.describe("your estimated in_progress wall time in minutes; positive integer only, no fractions"),
 });
 type ItemParam = z.infer<typeof itemParam>;
 
@@ -66,7 +66,7 @@ const fields = {
 	items: z.array(itemParam).optional().describe("tasks for flat init or append"),
 	reason: z.string().optional().describe("blocker note for block"),
 	explanation: z.string().optional().describe("new explanation for explain"),
-	estimatedMinutes: estimatedMinutesSchema.optional().describe("new total time estimate for estimate; preserves elapsed time"),
+	estimatedMinutes: estimatedMinutesSchema.optional().describe("new positive integer minute estimate for estimate; preserves elapsed time"),
 };
 // @upstream-end
 

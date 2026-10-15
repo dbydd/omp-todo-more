@@ -37,8 +37,9 @@ export type Explanation = { readonly kind: "explained"; readonly text: string } 
 /** Estimates are model-owned; imported items have no invented budget or historical clock. */
 export const estimatedMinutesSchema = z
 	.number()
+	.int()
 	.positive()
-	.max(Number.MAX_SAFE_INTEGER / 60_000);
+	.max(Math.floor(Number.MAX_SAFE_INTEGER / 60_000));
 const timestampSchema = z.number().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const itemTimeSchema = z.union([
 	z.object({ kind: z.literal("missing") }),
