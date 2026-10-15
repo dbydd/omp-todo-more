@@ -1,16 +1,18 @@
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { type ToolRenderResultOptions, z } from "@oh-my-pi/pi-coding-agent";
 import { type Component, replaceTabs, Text, type Theme, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
-import { goalLines, TODO_STATUSES, type TodoMoreSnapshot, type TodoStatus, todoGoalSchema } from "./state.ts";
+import {
+	goalLines,
+	itemSnapshotSchema,
+	TODO_STATUSES,
+	type TodoMoreSnapshot,
+	type TodoStatus,
+	timeEstimateText,
+	todoGoalSchema,
+} from "./state.ts";
 import { OPS, type TodoMoreDetails } from "./tool.ts";
 
 /** Result snapshots are display copies, not a second source of todo state. */
-const itemSchema = z.object({
-	title: z.string(),
-	explanation: z.string().nullable(),
-	status: z.enum(TODO_STATUSES),
-	blocker: z.string().optional(),
-});
 export const detailsSchema = z.object({
 	op: z.enum(OPS).optional(),
 	phases: z.array(
@@ -22,7 +24,7 @@ export const detailsSchema = z.object({
 	storage: z.enum(["session", "memory"]),
 	completedTasks: z.array(z.object({ phase: z.string(), content: z.string() })).optional(),
 	todoMore: z.literal(true),
-	more: z.object({ goal: todoGoalSchema.nullable(), phases: z.array(z.object({ name: z.string(), items: z.array(itemSchema) })) }),
+	more: z.object({ goal: todoGoalSchema.nullable(), phases: z.array(z.object({ name: z.string(), items: z.array(itemSnapshotSchema) })) }),
 });
 type Item = TodoMoreSnapshot["phases"][number]["items"][number];
 type Phase = TodoMoreSnapshot["phases"][number];
@@ -207,7 +209,8 @@ function formatItem(item: Item, theme: Theme, transitioned: boolean, frame: numb
 			throw new Error(`Unexpected todo status: ${String(unreachable)}`);
 		}
 	}
-	return item.explanation === null ? `${line} ${theme.fg("warning", "[explanation missing]")}` : line;
+	const title = item.explanation === null ? `${line} ${theme.fg("warning", "[explanation missing]")}` : line;
+	return `${title}\n${theme.fg(item.time.kind === "missing" ? "warning" : "dim", timeEstimateText(item.time))}`;
 }
 // @upstream-end
 
