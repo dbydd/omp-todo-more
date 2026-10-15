@@ -65,7 +65,7 @@ export function elapsedTime(time: Extract<ItemTime, { kind: "estimated" }>, now:
 }
 
 export function timeEstimateText(time: ItemTime): string {
-	return time.kind === "estimated" ? `Estimate: ${time.minutes} min` : "(no time estimate yet: add one with op estimate)";
+	return time.kind === "estimated" ? `Estimate: ${time.minutes} min` : "(no time estimate yet: add one with ESTIMATE)";
 }
 
 export type TodoItem = {
@@ -291,7 +291,7 @@ export function explanationText(item: TodoItem): string {
 		case "explained":
 			return item.explanation.text;
 		case "missing":
-			return "(no explanation yet: add one with op explain)";
+			return "(no explanation yet: add one with EXPLAIN)";
 		default: {
 			const unreachable: never = item.explanation;
 			throw new Error(`Unexpected explanation: ${String(unreachable)}`);

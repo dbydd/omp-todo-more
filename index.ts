@@ -51,7 +51,7 @@ import { registerReminders } from "./src/reminders.ts";
 import { renderTodoCall, renderTodoResult } from "./src/render.ts";
 import { registerReviewApi } from "./src/review-api.ts";
 import { initializeTernPlugin } from "./src/tern-plugin-install.ts";
-import { DESCRIPTION, parametersSchema, runTodo } from "./src/tool.ts";
+import { customFormat, DESCRIPTION, parametersSchema, runTodo } from "./src/tool.ts";
 import { registerUi } from "./src/ui.ts";
 
 const TOOL_NAME = "todo";
@@ -70,13 +70,13 @@ const TOOL_FIELDS = {
 	summary: "Write a structured todo list with a goal to track progress within a session",
 	description: DESCRIPTION,
 	parameters: parametersSchema,
+	customFormat,
 	approval: "read" as const,
 	loadMode: "discoverable" as const,
 	strict: true,
-	// Read off the definition by the host (extensibility/tool-proxy.ts): calls run one at a time,
-	// and a call without `op` reaches execute raw so the tool can infer it as native todo does.
+	// The host proxies extension fields, including edit-style customFormat, unchanged.
+	// Serialize complete batches; partial arguments are display-only intent.
 	concurrency: "exclusive" as const,
-	lenientArgValidation: true,
 	describeCall: describeTodoCall,
 	describeResult: describeTodoResult,
 };

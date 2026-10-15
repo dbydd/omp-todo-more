@@ -11,7 +11,7 @@ import { errorText } from "./errors.ts";
 import { readTodoMore, type TodoMoreState, toSnapshot } from "./state.ts";
 
 const INIT_REMINDER =
-	"Todo is empty. Initialize it now with op init before proceeding: include goal {objective, measure, doneWhen} and every step of your current plan as {title, explanation, estimatedMinutes}. Estimate each item's required time yourself in positive integer minutes; fractions are not allowed. edit is blocked until the list has items.";
+	'Todo is empty. Initialize it now with one complete Todo document: INIT "objective" "measure" "doneWhen", PHASE "name", and ADD "title" "explanation" minutes for every step, between *** Begin Todo and *** End Todo. Estimate each item yourself in positive integer minutes; no fractions or defaults. edit is blocked until the complete document succeeds and the list has items.';
 
 type HumanMessage = Extract<AgentMessage, { role: "user" | "custom" }>;
 
@@ -28,7 +28,7 @@ function reminder(state: TodoMoreState): string {
 		case "list":
 			return [
 				'<system-reminder source="todo-more">',
-				"Check that this todo matches your current plan and the latest user instructions. Update the goal, steps, explanations, time estimates and statuses wherever they disagree; do not omit or narrow the requested work. The complete todo snapshot is below, including completed, abandoned and blocked items. A null goal or explanation means it is missing and needs to be supplied; time.kind missing requires op estimate {task, estimatedMinutes}, using your own estimate rather than a default. Time budgets are forecasts, not permission to lower expectations or quality. You do not need to call todo view to check it.",
+				'Check that this todo matches your current plan and latest user instructions. Update the goal, steps, explanations, estimates and statuses wherever they disagree; do not omit or narrow work. The complete snapshot includes completed, abandoned and blocked items. A null goal/explanation is missing; time.kind missing requires ESTIMATE "title" minutes with your own positive integer estimate. Batch related changes in one Todo document. Budgets are forecasts, not permission to reduce scope or quality. You do not need VIEW to check this snapshot.',
 				JSON.stringify(toSnapshot(state), null, 2),
 				"</system-reminder>",
 			].join("\n");
