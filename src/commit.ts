@@ -3,13 +3,16 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-sessi
 import { errorText } from "./errors.ts";
 import { hostPhases, readTodoMore, TODO_MORE_ENTRY_TYPE, type TodoMoreState, toSnapshot } from "./state.ts";
 
+export type TodoSession = Pick<AgentSession, "sessionManager" | "setTodoPhases">;
+export type TodoWriter = Pick<ExtensionAPI, "appendEntry">;
+
 /** `persist` means acceptance by the authority branch, not a durable disk-write acknowledgement. */
 export type TodoCommitResult =
 	| { kind: "saved"; state: TodoMoreState }
 	| { kind: "failed"; stage: "persist" | "projection"; message: string };
 
 /** No await between reading the branch, appending its record and projecting it. */
-export function commitTodoState(pi: ExtensionAPI, session: AgentSession, next: TodoMoreState): TodoCommitResult {
+export function commitTodoState(pi: TodoWriter, session: TodoSession, next: TodoMoreState): TodoCommitResult {
 	try {
 		const current = readTodoMore(session.sessionManager.getBranch());
 		if (!Bun.deepEquals(current, next)) {
