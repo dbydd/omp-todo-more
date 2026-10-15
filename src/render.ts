@@ -1,7 +1,7 @@
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { type ToolRenderResultOptions, z } from "@oh-my-pi/pi-coding-agent";
 import { type Component, replaceTabs, Text, type Theme, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
-import { goalLines, TODO_STATUSES, type TodoMoreSnapshot, type TodoStatus, todoMoreSnapshotSchema } from "./state.ts";
+import { goalLines, TODO_STATUSES, type TodoMoreSnapshot, type TodoStatus, timeEstimateText, todoMoreSnapshotSchema } from "./state.ts";
 import { OPS, type TodoMoreDetails } from "./tool.ts";
 
 /** Result snapshots are display copies, not a second source of todo state. */
@@ -201,7 +201,8 @@ function formatItem(item: Item, theme: Theme, transitioned: boolean, frame: numb
 			throw new Error(`Unexpected todo status: ${String(unreachable)}`);
 		}
 	}
-	return item.explanation === null ? `${line} ${theme.fg("warning", "[explanation missing]")}` : line;
+	const title = item.explanation === null ? `${line} ${theme.fg("warning", "[explanation missing]")}` : line;
+	return `${title}\n${theme.fg(item.time.kind === "missing" ? "warning" : "dim", timeEstimateText(item.time))}`;
 }
 // @upstream-end
 

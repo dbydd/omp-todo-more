@@ -34,10 +34,45 @@ export type GoalState = { readonly kind: "set"; readonly goal: TodoGoal } | { re
 /** `missing`: the item was added outside the tool (`/todo`, an older session) and still needs one. */
 export type Explanation = { readonly kind: "explained"; readonly text: string } | { readonly kind: "missing" };
 
+/** Estimates are model-owned; imported items have no invented budget or historical clock. */
+export const estimatedMinutesSchema = z
+	.number()
+	.int()
+	.positive()
+	.max(Math.floor(Number.MAX_SAFE_INTEGER / 60_000));
+const timestampSchema = z.number().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const itemTimeSchema = z.union([
+	z.object({ kind: z.literal("missing") }),
+	z.object({
+		kind: z.literal("estimated"),
+		budgetId: z.string().min(1),
+		minutes: estimatedMinutesSchema,
+		elapsedMs: timestampSchema,
+		runningSince: timestampSchema.nullable(),
+	}),
+]);
+export type ItemTime = z.infer<typeof itemTimeSchema>;
+
+/** Only in_progress wall time counts; leaving it closes the current interval. */
+export function transitionTime(time: ItemTime, status: TodoStatus, now: number): ItemTime {
+	if (time.kind === "missing") return time;
+	if (status === "in_progress") return time.runningSince === null ? { ...time, runningSince: now } : time;
+	return time.runningSince === null ? time : { ...time, elapsedMs: elapsedTime(time, now), runningSince: null };
+}
+
+export function elapsedTime(time: Extract<ItemTime, { kind: "estimated" }>, now: number): number {
+	return time.elapsedMs + (time.runningSince === null ? 0 : Math.max(0, now - time.runningSince));
+}
+
+export function timeEstimateText(time: ItemTime): string {
+	return time.kind === "estimated" ? `Estimate: ${time.minutes} min` : "(no time estimate yet: add one with op estimate)";
+}
+
 export type TodoItem = {
 	readonly title: string;
 	readonly explanation: Explanation;
 	readonly status: TodoStatus;
+	readonly time: ItemTime;
 	readonly blocker?: string;
 };
 
@@ -56,17 +91,19 @@ export const todoGoalSchema = z.object({ objective: nonEmpty, measure: nonEmpty,
 
 const statusSchema = z.enum(TODO_STATUSES);
 
+/** Older snapshots and native imports are explicitly unestimated. */
+export const itemSnapshotSchema = z.object({
+	title: z.string(),
+	explanation: z.string().nullable(),
+	status: statusSchema,
+	blocker: z.string().optional(),
+	time: itemTimeSchema.default(() => ({ kind: "missing" })),
+});
+
 /** The persisted snapshot: `explanation: null` and `goal: null` encode the `missing` variants. */
 export const todoMoreSnapshotSchema = z.object({
 	goal: todoGoalSchema.nullable(),
-	phases: z.array(
-		z.object({
-			name: z.string(),
-			items: z.array(
-				z.object({ title: z.string(), explanation: z.string().nullable(), status: statusSchema, blocker: z.string().optional() }),
-			),
-		}),
-	),
+	phases: z.array(z.object({ name: z.string(), items: z.array(itemSnapshotSchema) })),
 });
 export type TodoMoreSnapshot = z.infer<typeof todoMoreSnapshotSchema>;
 
@@ -113,6 +150,7 @@ export function toSnapshot(state: TodoMoreState): TodoMoreSnapshot {
 						title: item.title,
 						explanation: item.explanation.kind === "explained" ? item.explanation.text : null,
 						status: item.status,
+						time: item.time,
 						...(item.blocker === undefined ? {} : { blocker: item.blocker }),
 					})),
 				})),
@@ -133,6 +171,7 @@ function fromSnapshot(snapshot: TodoMoreSnapshot): TodoMoreState {
 				title: item.title,
 				explanation: item.explanation === null ? { kind: "missing" } : { kind: "explained", text: item.explanation },
 				status: item.status,
+				time: item.time,
 				...(item.blocker === undefined ? {} : { blocker: item.blocker }),
 			}),
 		),
@@ -141,7 +180,9 @@ function fromSnapshot(snapshot: TodoMoreSnapshot): TodoMoreState {
 }
 
 /** One branch record that defines the list, newest first. */
-type Record = { readonly kind: "rich"; readonly state: TodoMoreState } | { readonly kind: "native"; readonly phases: NativePhases };
+type Record =
+	| { readonly kind: "rich"; readonly state: TodoMoreState }
+	| { readonly kind: "native"; readonly phases: NativePhases; readonly at: number };
 
 // @upstream adapted @oh-my-pi/pi-coding-agent@18.10.1 src/tools/todo.ts#canonicalTodoPhases
 function recordOf(entry: SessionEntry): Record | undefined {
@@ -152,7 +193,7 @@ function recordOf(entry: SessionEntry): Record | undefined {
 		}
 		if (entry.customType === USER_TODO_EDIT_CUSTOM_TYPE) {
 			const parsed = userEditSchema.safeParse(entry.data);
-			return parsed.success ? { kind: "native", phases: parsed.data.phases } : undefined;
+			return parsed.success ? { kind: "native", phases: parsed.data.phases, at: Date.parse(entry.timestamp) } : undefined;
 		}
 		return undefined;
 	}
@@ -161,7 +202,7 @@ function recordOf(entry: SessionEntry): Record | undefined {
 	if (!parsed.success || parsed.data.isError === true || parsed.data.details.op === "view") return undefined;
 	// todo-more's own results follow the entry that records them.
 	if (markedDetailsSchema.safeParse(parsed.data.details).success) return undefined;
-	return { kind: "native", phases: parsed.data.details.phases };
+	return { kind: "native", phases: parsed.data.details.phases, at: Date.parse(entry.timestamp) };
 }
 // @upstream-end
 
@@ -170,15 +211,16 @@ function recordOf(entry: SessionEntry): Record | undefined {
  * nearest earlier rich snapshot: titles keep their explanation, the goal carries
  * over, new titles are `missing`. An empty snapshot in between ends the join.
  */
-function joinNative(phases: NativePhases, base: TodoMoreState): TodoMoreState {
-	const known = new Map<string, Explanation>();
-	if (base.kind === "list") for (const item of base.phases.flatMap((phase) => phase.items)) known.set(item.title, item.explanation);
+function joinNative(phases: NativePhases, base: TodoMoreState, at: number): TodoMoreState {
+	const known = new Map<string, TodoItem>();
+	if (base.kind === "list") for (const item of base.phases.flatMap((phase) => phase.items)) known.set(item.title, item);
 	const joined = phases.map((phase) => ({
 		name: phase.name,
 		items: phase.tasks.map(
 			(task): TodoItem => ({
 				title: task.content,
-				explanation: known.get(task.content) ?? { kind: "missing" },
+				explanation: known.get(task.content)?.explanation ?? { kind: "missing" },
+				time: transitionTime(known.get(task.content)?.time ?? { kind: "missing" }, task.status, at),
 				status: task.status,
 				...(task.blocker === undefined ? {} : { blocker: task.blocker }),
 			}),
@@ -189,17 +231,18 @@ function joinNative(phases: NativePhases, base: TodoMoreState): TodoMoreState {
 
 /** The todo-more state on `entries` (a session branch, oldest first). */
 export function readTodoMore(entries: readonly SessionEntry[]): TodoMoreState {
-	const pending: NativePhases[] = [];
+	const pending: Extract<Record, { kind: "native" }>[] = [];
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (entry === undefined) continue;
 		const record = recordOf(entry);
 		if (record === undefined) continue;
-		if (record.kind === "rich") return pending.reduceRight<TodoMoreState>((state, phases) => joinNative(phases, state), record.state);
-		pending.push(record.phases);
+		if (record.kind === "rich")
+			return pending.reduceRight<TodoMoreState>((state, native) => joinNative(native.phases, state, native.at), record.state);
+		pending.push(record);
 		if (record.phases.every((phase) => phase.tasks.length === 0)) break;
 	}
-	return pending.reduceRight<TodoMoreState>((state, phases) => joinNative(phases, state), EMPTY);
+	return pending.reduceRight<TodoMoreState>((state, native) => joinNative(native.phases, state, native.at), EMPTY);
 }
 
 /** The host's view of the list: what `session.setTodoPhases`, the HUD and native tool-result consumers take. */

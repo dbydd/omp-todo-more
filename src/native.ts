@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { type NativeChild, type NativeNode, node, span, stableKey } from "@oh-my-pi/pi-tui";
 import { detailsSchema, parseCall } from "./render.ts";
-import type { TodoMoreSnapshot, TodoStatus } from "./state.ts";
+import { type TodoMoreSnapshot, type TodoStatus, timeEstimateText } from "./state.ts";
 import type { parametersSchema, TodoMoreDetails } from "./tool.ts";
 
 function checklistStatus(status: TodoStatus): "pending" | "active" | "done" | "dropped" | "blocked" {
@@ -52,7 +52,7 @@ export function describeSnapshot(snapshot: TodoMoreSnapshot, editable = false, s
 						id: item.title,
 						text: item.title,
 						status: checklistStatus(item.status),
-						note: `Explanation: ${item.explanation ?? "[explanation missing]"}${item.blocker === undefined ? "" : `\nBlocker: ${item.blocker}`}`,
+						note: `${timeEstimateText(item.time)}\nExplanation: ${item.explanation ?? "[explanation missing]"}${item.blocker === undefined ? "" : `\nBlocker: ${item.blocker}`}`,
 					})),
 				})),
 			},

@@ -3,7 +3,7 @@
  * configuration must switch off (`todo.enabled: false`). Built on the native implementation:
  * the tool, its reminders and its rendering are copies of OMP code, adapted to
  * a list that carries a goal ({objective, measure, doneWhen}) and items that
- * carry a title and an explanation. Copied code is marked
+ * carry a title, explanation and model-estimated time budget. Copied code is marked
  * `// @upstream <verbatim|adapted> …` … `// @upstream-end` (see
  * `src/state.ts`).
  *
@@ -45,6 +45,7 @@ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { errorText } from "./src/errors.ts";
 import { describeTodoCall, describeTodoResult } from "./src/native.ts";
+import { registerOvertime } from "./src/overtime.ts";
 import { registerPlanning } from "./src/planning.ts";
 import { registerReminders } from "./src/reminders.ts";
 import { renderTodoCall, renderTodoResult } from "./src/render.ts";
@@ -129,6 +130,7 @@ export default async function todoMore(pi: ExtensionAPI): Promise<void> {
 	});
 
 	registerReminders(pi);
+	registerOvertime(pi);
 	registerPlanning(pi);
 	registerReviewApi(pi);
 	registerUi(pi);

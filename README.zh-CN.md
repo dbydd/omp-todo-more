@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-OMP 的富信息 Todo 插件。替代原生 `todo`，保留标题寻址、阶段进度、提醒、planning 检查与 `task:*` 子会话行为；列表包含 goal 和每项 explanation。
+OMP 的富信息 Todo 插件。替代原生 `todo`，保留标题寻址、阶段进度、提醒、planning 检查与 `task:*` 子会话行为；列表包含 goal，以及每项 explanation 和模型预估耗时。
 
 ## 安装与启用
 
@@ -23,13 +23,37 @@ todo:
 
 ## 工具与状态
 
-`todo` 操作保持为 `init/start/done/rm/drop/block/unblock/append/view/explain`。任务身份是完整 title；goal 为 `{objective, measure, doneWhen}`，新增任务为 `{title, explanation}`。空列表不携带 goal。已有列表缺 goal 时，下一次 mutation 必须提供 goal。
+`todo` 操作包括 `init/start/done/rm/drop/block/unblock/append/view/explain/estimate`。任务身份是完整 title；goal 为 `{objective, measure, doneWhen}`，新增任务为 `{title, explanation, estimatedMinutes}`。模型必须对 `init` 或 `append` 创建的每一项自行估时，系统不提供默认估计。`estimatedMinutes` 必须为正整数，不允许小数，也不会自动取整；最大为 `Math.floor(Number.MAX_SAFE_INTEGER / 60_000)`，确保转换为毫秒后安全。缺失或非法估计会拒绝整次调用。空列表不携带 goal。已有列表缺 goal 时，下一次 mutation 必须提供 goal。
 
 当前会话分支是唯一权威。改变状态的成功 mutation 追加完整 `mouriya.omp.todo-more` snapshot，并更新宿主 TodoTracker 投影。结果保留 `todoMore: true`、`details.more`、原生兼容 phases、storage 和完成 transitions。
 
-reader 按标题联结宿主 `user_todo_edit` 与旧原生工具结果：已知标题保留 explanation，新标题缺 explanation；原生空 snapshot 中断此前 goal/explanation 的继承。自有 marked 工具结果不重复作为状态记录读取。现有 reader 忽略格式无效的记录；本次迁移不更改这项兼容语义。
+reader 按标题联结宿主 `user_todo_edit` 与旧原生工具结果：已知标题保留 explanation 和计时元数据，新标题缺少两者；原生空 snapshot 中断此前 goal、explanation 和计时元数据的继承。自有 marked 工具结果不重复作为状态记录读取。现有 reader 忽略格式无效的记录；本次迁移不更改这项兼容语义。
 
 同步追加确认的是当前分支接受记录，不是磁盘 durable-write 确认。文件写入、flush 和磁盘失败处理属于 OMP SessionManager 生命周期；退出后 resume 是正常持久化路径的验证方式。
+
+### 估时与超时警告
+
+`estimate {task, estimatedMinutes}` 用于补齐或修订任务的总时间预算。旧 snapshot 和原生入口创建的项为 `time.kind: "missing"`；模型必须显式估时，系统不倒推未知历史耗时。首次补估计时，已经 active 的项从这次 estimate 调用开始计时。
+
+|任务变化|计时行为|
+|---|---|
+|进入 `in_progress`|开始一个墙钟区间。|
+|离开 `in_progress`，变为 pending、blocked 或关闭状态|累计当前区间并暂停。|
+|恢复或显式重新开始同一项|保留累计时间，开始下一个区间。|
+|重复 `start`、执行 `view`、编辑 explanation/goal|保留原有计时。|
+|修订估计|保留累计时间及正在运行的区间；数值变化会创建新的预算身份，同值是 no-op。|
+|删除后重新创建|新预算不继承被删除项的耗时。|
+
+只要持久状态仍为 `in_progress`，会话 idle 或进程停止期间也继续累计墙钟时间；这不是 CPU 时间统计。原生状态变化使用对应 session entry 的 timestamp 结算。
+
+插件只保留距离最近的 active 预算 deadline 的一个单次 timeout；todo 相关 journal 写入或 session/branch 变化时重新调度，不进行周期轮询，也不在 end hook 检查 deadline。原生 `/todo`、延后持久化的 native 工具结果以及已接受的 rich commit 都在 journal 写入方法上被观察，即使宿主投影失败也不会漏掉变更。普通消息不触发分支读取，collaboration 所有的 append callback 保持不变。到点 callback 重新读取当前分支后请求注入；超长等待仅按平台 timeout 上限分段。
+
+每个超时 active 预算在正常投递路径收到一次系统警告。修订后的新预算也有一次警告机会；如果保留的累计时间已经超过新预算，会再次告警。排队消息只是投递意图；实际 `mouriya.omp.todo-more.overtime` custom-message entry 才是通知事实，普通 compaction 保留分支 journal 中的这些记录。警告不复制进 item snapshot，重新加载时按分支重建 timeout。
+
+到点时，运行中的会话立即收到 aside 注入请求；宿主在下一个安全 step boundary 将警告提供给模型，不取消工具批次。检测和排队不等待 step 结束。idle 时警告立即追加到 transcript 和 context，但不启动模型 turn，因此不会撤销人工停止。shutdown 取消 timeout 并恢复被观察的 journal 方法；重新打开已超时的 active 项时重新检查。
+
+警告指出任务、预计时间与已耗时间，并要求 agent 保持预期结果、验收标准和质量，核实超时原因、判断是否改变方针、继续推进完整任务。警告推荐与 subagent 讨论原因和方针；子会话可与 parent 沟通。插件不自动创建 agent、不改变任务 status、不降低 goal。估计是预测而非硬 deadline，agent 不得仅为掩盖超时而重建列表或抬高预算。
+
 
 ## 子会话与提醒
 
@@ -57,13 +81,13 @@ completion judge 应在构造模型 prompt 前请求一次，并在模型返回�
 
 ## 编辑与提交
 
-GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，不增加模型工具操作。保存重新读取对应 session 的当前分支：只覆盖目标字段，任务的最新 phase/status/blocker/order 与其他字段全部保留。空列表拒绝编辑，missing goal 必须先设置；删除或改名的任务不因旧草稿恢复。
+GUI 编辑意图只有 `set_goal` 和按完整 title 的 `explain`，不增加模型工具操作。保存重新读取对应 session 的当前分支：只覆盖目标字段，任务的最新 phase/status/blocker/order、时间预算、计时和其他字段全部保留。空列表拒绝编辑，missing goal 必须先设置；删除或改名的任务不因旧草稿恢复。
 
 工具 mutation 与 GUI 保存共同调用 `commitTodoState`。同步追加后重读同一分支确认接受，再更新宿主投影。失败区分 branch acceptance 与 projection：后者不回滚已接受记录，工具返回 error 与最新权威 details，GUI 保留草稿和错误。相同值不追加 snapshot；重投影允许修复此前的部分 projection failure。`view` 保持纯读。
 
 ## 原生展示与编辑
 
-Todo More 在 Tern 顶替原生底部 Todo 进度。紧凑卡片显示进度环、当前任务和 closed/total；completed 与 abandoned 都计为 closed。点击卡片向上展开可滚动内容，显示 Objective、Measure、Done when、全部 phase/task、五种 status、explanation 和 blocker。goal 不伪装成任务，不影响进度；blocked 任务同时保留解释与阻塞原因。
+Todo More 在 Tern 顶替原生底部 Todo 进度。紧凑卡片显示进度环、当前任务和 closed/total；completed 与 abandoned 都计为 closed。点击卡片向上展开可滚动内容，显示 Objective、Measure、Done when、全部 phase/task、五种 status、预估耗时、explanation 和 blocker。goal 不伪装成任务，不影响进度；blocked 任务同时保留解释与阻塞原因。
 
 原生工具卡片和提醒使用同一套 goal 字段与原生 checklist 展示。历史工具卡片使用当次 `details.more`，提醒保留其发生时的快照；两者不成为编辑源，也不随当前列表编辑而改变。
 
@@ -92,7 +116,7 @@ Tern 的 headless `serve` 不自动加载已安装插件。原生 UI 验证需�
 ```sh
 bun install
 bun run format
-bun run check
+bunx tsc --noEmit
 bun test
 ```
 

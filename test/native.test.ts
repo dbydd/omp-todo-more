@@ -16,20 +16,41 @@ const snapshot: TodoMoreSnapshot = {
 		{
 			name: "Delivery",
 			items: [
-				{ title: "Plan the replacement", explanation: "Keep the host projection", status: "pending" },
-				{ title: "Implement the card", explanation: "Use the native checklist", status: "in_progress" },
+				{
+					title: "Plan the replacement",
+					explanation: "Keep the host projection",
+					status: "pending",
+					time: { kind: "missing" },
+				},
+				{
+					title: "Implement the card",
+					explanation: "Use the native checklist",
+					status: "in_progress",
+					time: { kind: "estimated", budgetId: "implement-budget", minutes: 25, elapsedMs: 60_000, runningSince: 120_000 },
+				},
 			],
 		},
 		{
 			name: "Verification",
 			items: [
-				{ title: "Inspect saved fields", explanation: "Read the historical result", status: "completed" },
-				{ title: "Old approach", explanation: "No longer needed", status: "abandoned" },
+				{
+					title: "Inspect saved fields",
+					explanation: "Read the historical result",
+					status: "completed",
+					time: { kind: "estimated", budgetId: "inspect-budget", minutes: 10, elapsedMs: 180_000, runningSince: null },
+				},
+				{
+					title: "Old approach",
+					explanation: "No longer needed",
+					status: "abandoned",
+					time: { kind: "missing" },
+				},
 				{
 					title: "Check runtime",
 					explanation: "Exercise the real native consumer",
 					status: "blocked",
 					blocker: "Waiting for the terminal",
+					time: { kind: "estimated", budgetId: "runtime-budget", minutes: 12, elapsedMs: 120_000, runningSince: null },
 				},
 			],
 		},
@@ -86,7 +107,7 @@ function resultBody(result: Parameters<typeof describeTodoResult>[0]): readonly 
 }
 
 describe("native todo presentation", () => {
-	test("preserves all goal fields, all five statuses, and both blocked explanation and reason", () => {
+	test("preserves all goal fields, all five statuses, estimate notes, and both blocked explanation and reason", () => {
 		const body = describeSnapshot(snapshot);
 
 		expect(goalItems(body)).toEqual([
@@ -106,13 +127,13 @@ describe("native todo presentation", () => {
 							id: "Plan the replacement",
 							text: "Plan the replacement",
 							status: "pending",
-							note: "Explanation: Keep the host projection",
+							note: "(no time estimate yet: add one with op estimate)\nExplanation: Keep the host projection",
 						},
 						{
 							id: "Implement the card",
 							text: "Implement the card",
 							status: "active",
-							note: "Explanation: Use the native checklist",
+							note: "Estimate: 25 min\nExplanation: Use the native checklist",
 						},
 					],
 				},
@@ -125,19 +146,19 @@ describe("native todo presentation", () => {
 							id: "Inspect saved fields",
 							text: "Inspect saved fields",
 							status: "done",
-							note: "Explanation: Read the historical result",
+							note: "Estimate: 10 min\nExplanation: Read the historical result",
 						},
 						{
 							id: "Old approach",
 							text: "Old approach",
 							status: "dropped",
-							note: "Explanation: No longer needed",
+							note: "(no time estimate yet: add one with op estimate)\nExplanation: No longer needed",
 						},
 						{
 							id: "Check runtime",
 							text: "Check runtime",
 							status: "blocked",
-							note: "Explanation: Exercise the real native consumer\nBlocker: Waiting for the terminal",
+							note: "Estimate: 12 min\nExplanation: Exercise the real native consumer\nBlocker: Waiting for the terminal",
 						},
 					],
 				},
@@ -145,10 +166,15 @@ describe("native todo presentation", () => {
 		});
 	});
 
-	test("keeps missing goal and explanation visible without inventing goal tasks", () => {
+	test("keeps missing goal, estimate, and explanation visible without inventing goal tasks", () => {
 		const body = describeSnapshot({
 			goal: null,
-			phases: [{ name: "Imported", items: [{ title: "Imported task", status: "pending", explanation: null }] }],
+			phases: [
+				{
+					name: "Imported",
+					items: [{ title: "Imported task", status: "pending", explanation: null, time: { kind: "missing" } }],
+				},
+			],
 		});
 
 		expect(goalItems(body)).toEqual([
@@ -157,7 +183,12 @@ describe("native todo presentation", () => {
 			{ k: "Done when", v: "[goal missing]" },
 		]);
 		expect(checklist(body).phases.flatMap((phase) => phase.items)).toEqual([
-			{ id: "Imported task", text: "Imported task", status: "pending", note: "Explanation: [explanation missing]" },
+			{
+				id: "Imported task",
+				text: "Imported task",
+				status: "pending",
+				note: "(no time estimate yet: add one with op estimate)\nExplanation: [explanation missing]",
+			},
 		]);
 	});
 
@@ -250,11 +281,27 @@ describe("native todo HUD", () => {
 });
 
 describe("native historical todo results", () => {
-	test("renders each result's own details.more after a different, newer snapshot was rendered", () => {
+	test("renders each result's own details.more and timing after a different, newer snapshot was rendered", () => {
 		const historical = resultFor(snapshot);
 		const newer = resultFor({
 			goal: { objective: "A new objective", measure: "A new measure", doneWhen: "A new completion boundary" },
-			phases: [{ name: "New phase", items: [{ title: "A new task", explanation: "Only in the new result", status: "completed" }] }],
+			phases: [
+				{
+					name: "New phase",
+					items: [{ title: "A new task", explanation: "Only in the new result", status: "completed", time: { kind: "missing" } }],
+				},
+				{
+					name: "Verification",
+					items: [
+						{
+							title: "Check runtime",
+							explanation: "A newer runtime check",
+							status: "completed",
+							time: { kind: "estimated", budgetId: "runtime-budget", minutes: 45, elapsedMs: 300_000, runningSince: null },
+						},
+					],
+				},
+			],
 		});
 		// A conflicting host projection must not replace the result's rich display copy.
 		historical.details = { ...historical.details, phases: newer.details.phases };
@@ -266,7 +313,12 @@ describe("native historical todo results", () => {
 			{ k: "Measure", v: "A new measure" },
 			{ k: "Done when", v: "A new completion boundary" },
 		]);
-		expect(checklist(newerBody).phases.flatMap((phase) => phase.items.map((item) => item.text))).toEqual(["A new task"]);
+		expect(checklist(newerBody).phases.flatMap((phase) => phase.items.map((item) => item.text))).toEqual(["A new task", "Check runtime"]);
+		expect(
+			checklist(newerBody)
+				.phases.flatMap((phase) => phase.items)
+				.find((item) => item.id === "Check runtime")?.note,
+		).toBe("Estimate: 45 min\nExplanation: A newer runtime check");
 		expect(goalItems(historicalBody)).toEqual([
 			{ k: "Objective", v: "Ship the native todo replacement" },
 			{ k: "Measure", v: "Every task and explanation is visible" },
@@ -283,6 +335,6 @@ describe("native historical todo results", () => {
 			checklist(historicalBody)
 				.phases.flatMap((phase) => phase.items)
 				.find((item) => item.id === "Check runtime")?.note,
-		).toBe("Explanation: Exercise the real native consumer\nBlocker: Waiting for the terminal");
+		).toBe("Estimate: 12 min\nExplanation: Exercise the real native consumer\nBlocker: Waiting for the terminal");
 	});
 });
