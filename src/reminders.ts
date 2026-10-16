@@ -408,6 +408,28 @@ function checkCompletion(session: AgentSession, cycle: Cycle, count: number, mes
 // @upstream-end
 
 /**
+ * `checkCompletion` behind the decider gate: the deterministic guards run first
+ * (they are free), and only an outcome that would spend a turn goes to the
+ * judge. A judge that cannot answer — no role, a non-judgment API, no
+ * credential, a transport error or the deadline — leaves the reminder silent,
+ * because a gate that cannot decide must not nag.
+ */
+async function gatedCompletion(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	session: AgentSession,
+	cycle: Cycle,
+	count: number,
+	message: AssistantMessage,
+	state: TodoMoreState,
+): Promise<Completion> {
+	const completion = checkCompletion(session, cycle, count, message, state);
+	if (completion.kind !== "remind") return completion;
+	const allowed = await shouldSendStopReminder(ctx, pi, session, state, assistantText(message));
+	return allowed ? completion : SILENT;
+}
+
+/**
  * The final assistant message when the stop is a text-only terminal answer.
  * Native skips the reminder at tool-call tails, error stops and capped empty
  * output (`agent-session.ts`, stop routing); aborted runs never reach it.
@@ -696,7 +718,7 @@ export function registerReminders(pi: ExtensionAPI): void {
 			const message = terminalAnswer(event.last_assistant_message);
 			if (session === undefined || message === undefined) return undefined;
 			const state = readTodoMore(ctx.sessionManager.getBranch());
-			const completion = checkCompletion(session, cycle, cycle.reminderCount, message, state);
+			const completion = await gatedCompletion(pi, ctx, session, cycle, cycle.reminderCount, message, state);
 			switch (completion.kind) {
 				case "silent":
 					return undefined;
@@ -752,8 +774,13 @@ export function registerReminders(pi: ExtensionAPI): void {
 					// The human owns the stop once a turn runs, a message waits, or a draft is being typed.
 					if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 					if (ctx.hasUI && ctx.ui.getEditorText().trim() !== "") return;
-					const completion = checkCompletion(session, cycle, cycle.reminderCount, message, readTodoMore(ctx.sessionManager.getBranch()));
+					const state = readTodoMore(ctx.sessionManager.getBranch());
+					// The judge takes seconds, so the idle recheck above would be stale by the
+					// time it answers; recheck it here instead, before the nudge goes out.
+					const completion = await gatedCompletion(pi, ctx, session, cycle, cycle.reminderCount, message, state);
 					if (completion.kind !== "remind") return;
+					if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+					if (ctx.hasUI && ctx.ui.getEditorText().trim() !== "") return;
 					// The message itself is this turn's prompt and its own visible reminder, so
 					// there is no host continuation to hand a notice to: `pending` stays clear and
 					// `before_agent_start` leaves the reminder count alone (only `resetCycle` runs),
@@ -786,7 +813,7 @@ export function registerReminders(pi: ExtensionAPI): void {
 				if (message === undefined) return;
 				const branch = ctx.sessionManager.getBranch();
 				const state = readTodoMore(branch);
-				const completion = checkCompletion(session, cycle, remindersSinceUserMessage(branch), message, state);
+				const completion = await gatedCompletion(pi, ctx, session, cycle, remindersSinceUserMessage(branch), message, state);
 				switch (completion.kind) {
 					case "silent":
 						return;
