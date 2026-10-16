@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Wire the stop-reminder decider gate: `shouldSendStopReminder` was exported and imported but never called, so every stop reminder spent a turn ungated. It now runs behind `gatedCompletion` at `session_stop`, the cut-off timer and the subagent `agent_end`, after the free deterministic guards; the cut-off timer rechecks idle after the judge, which takes seconds.
+
 - Add edit-style single-document Todo initialization and batch editing, with readonly streaming previews and one final commit.
 - Preserve explicit minute estimates, active clocks and deadline warnings in batches; return ordered accepted changes for history consumers.
 
